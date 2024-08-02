@@ -111,6 +111,21 @@ def init_standard_scopes():
     )
 
 
+def init_sadco_scopes():
+    """Create or update the set of available SADCO API scopes."""
+    for scope_id in (scope_ids := [s.value for s in SADCOScope]):
+        if not Session.get(Scope, (scope_id, ScopeType.client)):
+            scope = Scope(id=scope_id, type=ScopeType.client)
+            scope.save()
+
+    Session.execute(
+        delete(Scope).
+        where(Scope.type == ScopeType.client).
+        where(Scope.id.like('sadco.%')).
+        where(Scope.id.not_in(scope_ids))
+    )
+
+
 def init_client_scopes():
     """Create or update the set of available API scopes for
     SADCO, SOMISANA and NCCRD."""
