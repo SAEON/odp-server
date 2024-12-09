@@ -66,6 +66,10 @@ Tag.DateRange:
   type: tag
   uri: https://odp.saeon.ac.za/schema/tag/daterange
 
+Tag.DateRangeInc:
+  type: tag
+  uri: https://odp.saeon.ac.za/schema/tag/daterangeinc
+
 Vocabulary.Infrastructure:
   type: vocabulary
   uri: https://odp.saeon.ac.za/schema/vocabulary/infrastructure

@@ -1,16 +1,18 @@
-from datetime import datetime
+from datetime import datetime, date
 from random import randint
 
 import pytest
 from sqlalchemy import select
 
-from odp.const import ODPScope
+from odp.const import ODPScope, ODPTagSchema, ODPDateRangeIncType, ODPPackageTag
 from odp.const.db import ScopeType
 from odp.db.models import Package, PackageAudit, PackageTag, PackageTagAudit, Resource, Scope, Tag, User
 from test import TestSession
-from test.api import assert_empty_result, assert_forbidden, assert_new_timestamp, assert_not_found, assert_tag_instance_output, test_resource
+from test.api import assert_empty_result, assert_forbidden, assert_new_timestamp, assert_not_found, \
+    assert_tag_instance_output, test_resource
 from test.api.conftest import try_skip_user_provider_constraint
-from test.factories import FactorySession, PackageFactory, PackageTagFactory, ProviderFactory, ResourceFactory, SchemaFactory, TagFactory
+from test.factories import FactorySession, PackageFactory, PackageTagFactory, ProviderFactory, ResourceFactory, \
+    SchemaFactory, TagFactory, ScopeFactory
 
 
 @pytest.fixture
@@ -110,7 +112,8 @@ def assert_tag_audit_log(grant_type, *entries):
     assert len(result) == len(entries)
     for n, row in enumerate(result):
         auth_client_id = entries[n]['package_tag'].get('auth_client_id', 'odp.test.client')
-        auth_user_id = entries[n]['package_tag'].get('auth_user_id', 'odp.test.user' if grant_type == 'authorization_code' else None)
+        auth_user_id = entries[n]['package_tag'].get('auth_user_id',
+                                                     'odp.test.user' if grant_type == 'authorization_code' else None)
         assert row.client_id == auth_client_id
         assert row.user_id == auth_user_id
         assert row.command == entries[n]['command']
@@ -827,3 +830,68 @@ def test_tag_package(
 
     assert_db_state(package_batch)
     assert_no_audit_log()
+
+
+def date_range_package_tag(package: PackageFactory, package_write_scope: ScopeFactory):
+    schema_uri = 'https://odp.saeon.ac.za/schema/tag/daterange'
+    return PackageTagFactory(
+        package=package,
+        tag=get_date_range_tag(ODPTagSchema.DATERANGE, schema_uri, ODPPackageTag.DATERANGE, package_write_scope),
+        data={
+            'start': '1990/01/01',
+            'end': '2000/01/01'
+        }
+    )
+
+
+def date_range_inc_package_tag(package: PackageFactory, package_write_scope: ScopeFactory):
+    schema_uri = 'https://odp.saeon.ac.za/schema/tag/daterangeinc'
+    return PackageTagFactory(
+        package=package,
+        tag=get_date_range_tag(ODPTagSchema.DATERANGEINC, schema_uri, ODPPackageTag.DATERANGEINC, package_write_scope),
+        data={
+            'end': ODPDateRangeIncType.CURRENT_DATE
+        }
+    )
+
+
+def get_date_range_tag(schema_id: str, schema_uri: str, tag_id: str, package_write_scope: ScopeFactory):
+    date_range_schema = SchemaFactory(
+        id=schema_id,
+        uri=schema_uri,
+        type='tag',
+    )
+
+    return TagFactory(
+        id=tag_id,
+        type='package',
+        cardinality='one',
+        scope=package_write_scope,
+        schema=date_range_schema
+    )
+
+
+def test_inc_end_date():
+    from odp.package.date_range import DateRangeInc
+
+    test_package = PackageFactory()
+
+    package_write_scope = ScopeFactory(
+        id=ODPScope.PACKAGE_WRITE,
+        type='odp'
+    )
+
+    date_range_inc_package_tag(test_package, package_write_scope)
+    date_range_package_tag(test_package, package_write_scope)
+
+    DateRangeInc().execute()
+
+    stmt = (
+        select(Package, PackageTag)
+        .where(PackageTag.package_id == test_package.id)
+        .where(PackageTag.tag_id == ODPPackageTag.DATERANGE.value)
+    )
+
+    res = TestSession.execute(stmt).first()
+
+    assert res.PackageTag.data['end'] == date.today().strftime("%Y/%m/%d")

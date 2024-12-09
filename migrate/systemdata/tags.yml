@@ -34,6 +34,13 @@ Package.SDG:
   schema_id: Tag.Keyword
   vocabulary_id: SDG
 
+Package.DateRangeInc:
+  type: package
+  cardinality: one
+  public: False
+  scope_id: odp.package:write
+  schema_id: Tag.DateRangeInc
+
 Collection.Published:
   type: collection
   cardinality: one
@@ -127,3 +134,4 @@ Record.SDG:
   scope_id: odp.record:sdg
   schema_id: Tag.Keyword
   vocabulary_id: SDG
+

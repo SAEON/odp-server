@@ -1,0 +1,12 @@
+#!/usr/bin/env python
+
+import pathlib
+import sys
+
+rootdir = pathlib.Path(__file__).parent.parent
+sys.path.append(str(rootdir))
+
+import odp.package
+
+if __name__ == '__main__':
+    odp.package.run_all()

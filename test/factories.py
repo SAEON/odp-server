@@ -139,6 +139,7 @@ class ODPModelFactory(SQLAlchemyModelFactory):
 class ScopeFactory(ODPModelFactory):
     class Meta:
         model = Scope
+        sqlalchemy_get_or_create = ('id', 'type')  # Force the factory to fetch if keys match
 
     id = factory.Sequence(lambda n: f'{fake.word()}.{n}')
     type = factory.LazyFunction(lambda: choice(('odp', 'oauth', 'client')))
