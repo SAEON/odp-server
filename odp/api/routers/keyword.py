@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from jschon import JSON, URI
@@ -10,43 +11,32 @@ from odp.api.lib.auth import Authorize, Authorized
 from odp.api.lib.paging import Paginator
 from odp.api.models import KeywordHierarchyModel, KeywordModel, KeywordModelAdmin, KeywordModelIn, Page
 from odp.const import ODPScope
-from odp.const.db import AuditCommand, KeywordStatus, SchemaType
+from odp.const.db import AuditCommand, KeywordStatus
 from odp.db import Session
-from odp.db.models import Keyword, KeywordAudit, Schema
+from odp.db.models import Keyword, KeywordAudit, Vocabulary
 from odp.lib.schema import schema_catalog
 
 router = APIRouter()
 
 
-def get_child_schema(parent: Keyword) -> Schema | None:
-    """Get the validating schema for keywords in the given parent vocabulary."""
-    if parent is None:
-        return None
-
-    if parent.child_schema_id:
-        return parent.child_schema
-
-    return get_child_schema(parent.parent)
-
-
 async def validate_keyword_input(
-        keyword_id: str,
+        vocabulary_id: str,
         keyword_in: KeywordModelIn,
 ) -> None:
-    if not keyword_id.startswith(keyword_in.parent_id) or keyword_id == keyword_in.parent_id:
+    if not (vocabulary := Session.get(Vocabulary, vocabulary_id)):
         raise HTTPException(
-            HTTP_422_UNPROCESSABLE_ENTITY, f"'{keyword_in.parent_id}' cannot be a parent of '{keyword_id}'"
+            HTTP_404_NOT_FOUND, 'Vocabulary not found'
         )
 
-    if not (parent := Session.get(Keyword, keyword_in.parent_id)):
-        raise HTTPException(
-            HTTP_404_NOT_FOUND, f"Parent keyword '{keyword_in.parent_id}' does not exist"
-        )
+    if keyword_in.parent_id is not None:
+        if not Session.execute(
+                select(Keyword).where(Keyword.vocabulary_id == vocabulary_id).where(Keyword.id == keyword_in.parent_id)
+        ).scalar_one_or_none():
+            raise HTTPException(
+                HTTP_404_NOT_FOUND, 'Parent keyword not found'
+            )
 
-    keyword_jsonschema = schema_catalog.get_schema(URI(
-        get_child_schema(parent).uri
-    ))
-
+    keyword_jsonschema = schema_catalog.get_schema(URI(vocabulary.schema.uri))
     validity = keyword_jsonschema.evaluate(JSON(keyword_in.data)).output('basic')
     if not validity['valid']:
         raise HTTPException(
@@ -54,26 +44,35 @@ async def validate_keyword_input(
         )
 
 
+class RecurseMode(Enum):
+    ALL = 'all'
+    APPROVED = 'approved'
+
+
 def output_keyword_model(
         keyword: Keyword,
-        recurse: bool = False,
+        *,
+        recurse: RecurseMode = None,
 ) -> KeywordModel | KeywordHierarchyModel:
     cls = KeywordHierarchyModel if recurse else KeywordModel
 
-    schema = get_child_schema(keyword.parent)
     kwargs = dict(
+        vocabulary_id=keyword.vocabulary_id,
         id=keyword.id,
+        key=keyword.key,
         data=keyword.data,
         status=keyword.status,
         parent_id=keyword.parent_id,
-        schema_id=schema.id if schema else None,
+        parent_key=keyword.parent.key if keyword.parent_id else None,
+        schema_id=keyword.vocabulary.schema_id,
     )
 
     if recurse:
         kwargs |= dict(
             child_keywords=[
-                output_keyword_model(child, True)
+                output_keyword_model(child, recurse=recurse)
                 for child in keyword.children
+                if recurse == RecurseMode.ALL or child.status == KeywordStatus.approved
             ]
         )
 
@@ -91,27 +90,82 @@ def create_audit_record(
         user_id=auth.user_id,
         command=command,
         timestamp=timestamp,
+        _vocabulary_id=keyword.vocabulary_id,
         _id=keyword.id,
+        _key=keyword.key,
         _data=keyword.data,
         _status=keyword.status,
         _parent_id=keyword.parent_id,
-        _child_schema_id=keyword.child_schema_id,
     ).save()
 
 
 @router.get(
     '/',
-    dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ))],
+    dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ_ALL))],
 )
-async def list_vocabularies(
+async def list_all_keywords(
+        vocabulary_id: list[str] = Query(None, title='Filter by vocabulary(-ies)'),
         paginator: Paginator = Depends(),
 ) -> Page[KeywordModel]:
     """
-    List top-level keywords (root vocabularies). Requires scope `odp.keyword:read`.
+    Get a flat list of all keywords, optionally filtered by one or more vocabulary.
+    Requires scope `odp.keyword:read_all`.
     """
+    stmt = select(Keyword)
+
+    if vocabulary_id:
+        stmt = stmt.where(Keyword.vocabulary_id.in_(vocabulary_id))
+
+    return paginator.paginate(
+        stmt,
+        lambda row: output_keyword_model(row.Keyword),
+    )
+
+
+@router.get(
+    '/{keyword_id}',
+    dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ_ALL))],
+)
+async def get_any_keyword(
+        keyword_id: int,
+        recurse: bool = Query(False, title='Populate child keywords, recursively'),
+) -> KeywordHierarchyModel | KeywordModel:
+    """
+    Get any keyword by id. Requires scope `odp.keyword:read_all`.
+    """
+    if not (keyword := Session.execute(
+            select(Keyword).where(Keyword.id == keyword_id)
+    ).scalar_one_or_none()):
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    return output_keyword_model(keyword, recurse=RecurseMode.ALL if recurse else None)
+
+
+@router.get(
+    '/{vocabulary_id}/',
+    dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ))],
+)
+async def list_keywords(
+        vocabulary_id: str,
+        paginator: Paginator = Depends(),
+) -> Page[KeywordModel]:
+    """
+    Get a flat list of approved keywords for a vocabulary. Requires scope `odp.keyword:read`.
+    """
+    if not Session.get(Vocabulary, vocabulary_id):
+        raise HTTPException(
+            HTTP_404_NOT_FOUND, f'Vocabulary {vocabulary_id} not found'
+        )
+
+    # Note: If a parent keyword is not approved but has approved children,
+    # we should ideally not include those children in the response. We are,
+    # however, simply returning all approved keywords from anywhere in the
+    # hierarchy. In this (edge) case, the caller will see such child keywords
+    # as being orphaned.
     stmt = (
         select(Keyword).
-        where(Keyword.parent_id == None)
+        where(Keyword.vocabulary_id == vocabulary_id).
+        where(Keyword.status == KeywordStatus.approved)
     )
 
     return paginator.paginate(
@@ -121,74 +175,94 @@ async def list_vocabularies(
 
 
 @router.get(
-    '/{parent_id:path}/',
-    dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ))],
-)
-async def list_keywords(
-        parent_id: str = Path(..., title='Parent keyword (vocabulary) identifier'),
-        recurse: bool = Query(False, title='Populate child keywords, recursively'),
-        paginator: Paginator = Depends(),
-) -> Page[KeywordHierarchyModel] | Page[KeywordModel]:
-    """
-    List the keywords in a vocabulary. Requires scope `odp.keyword:read`.
-    """
-    if not Session.get(Keyword, parent_id):
-        raise HTTPException(
-            HTTP_404_NOT_FOUND, f"Parent keyword '{parent_id}' does not exist"
-        )
-
-    stmt = (
-        select(Keyword).
-        where(Keyword.parent_id == parent_id)
-    )
-
-    return paginator.paginate(
-        stmt,
-        lambda row: output_keyword_model(row.Keyword, recurse),
-    )
-
-
-@router.get(
-    '/{keyword_id:path}',
+    '/{vocabulary_id}/{key}',
     dependencies=[Depends(Authorize(ODPScope.KEYWORD_READ))],
 )
 async def get_keyword(
-        keyword_id: str = Path(..., title='Keyword identifier'),
+        vocabulary_id: str,
+        key: str,
         recurse: bool = Query(False, title='Populate child keywords, recursively'),
 ) -> KeywordHierarchyModel | KeywordModel:
     """
-    Get a keyword. Requires scope `odp.keyword:read`.
+    Get an approved keyword, optionally with child keywords. Requires scope `odp.keyword:read`.
     """
-    if not (keyword := Session.get(Keyword, keyword_id)):
-        raise HTTPException(
-            HTTP_404_NOT_FOUND, f"Keyword '{keyword_id}' does not exist"
-        )
+    found = False
+    if keyword := Session.execute(
+            select(Keyword).where(Keyword.vocabulary_id == vocabulary_id).where(Keyword.key == key)
+    ).scalar_one_or_none():
+        found = keyword.status == KeywordStatus.approved
 
-    return output_keyword_model(keyword, recurse)
+    if not found:
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    return output_keyword_model(keyword, recurse=RecurseMode.APPROVED if recurse else None)
 
 
 @router.post(
-    '/{keyword_id:path}',
+    '/{vocabulary_id}/',
 )
 async def suggest_keyword(
+        vocabulary_id: str,
         keyword_in: KeywordModelIn,
-        keyword_id: str = Path(..., title='Keyword identifier'),
         auth: Authorized = Depends(Authorize(ODPScope.KEYWORD_SUGGEST)),
         _=Depends(validate_keyword_input),
 ) -> KeywordModel:
     """
     Create a keyword with status `proposed`. Requires scope `odp.keyword:suggest`.
     """
-    if Session.get(Keyword, keyword_id):
+    return _create_keyword(
+        vocabulary_id,
+        keyword_in.key,
+        keyword_in.data,
+        KeywordStatus.proposed,
+        keyword_in.parent_id,
+        auth,
+    )
+
+
+@router.put(
+    '/{vocabulary_id}/',
+)
+async def create_keyword(
+        vocabulary_id: str,
+        keyword_in: KeywordModelAdmin,
+        auth: Authorized = Depends(Authorize(ODPScope.KEYWORD_ADMIN)),
+        _=Depends(validate_keyword_input),
+) -> KeywordModel:
+    """
+    Create a keyword. Requires scope `odp.keyword:admin`.
+    """
+    return _create_keyword(
+        vocabulary_id,
+        keyword_in.key,
+        keyword_in.data,
+        keyword_in.status,
+        keyword_in.parent_id,
+        auth,
+    )
+
+
+def _create_keyword(
+        vocabulary_id: str,
+        key: str,
+        data: dict,
+        status: KeywordStatus,
+        parent_id: int | None,
+        auth: Authorized,
+) -> KeywordModel:
+    if Session.execute(
+            select(Keyword).where(Keyword.vocabulary_id == vocabulary_id).where(Keyword.key == key)
+    ).scalar_one_or_none():
         raise HTTPException(
-            HTTP_409_CONFLICT, f"Keyword '{keyword_id}' already exists"
+            HTTP_409_CONFLICT, f"Keyword '{key}' already exists"
         )
 
     keyword = Keyword(
-        id=keyword_id,
-        data=keyword_in.data,
-        status=KeywordStatus.proposed,
-        parent_id=keyword_in.parent_id,
+        vocabulary_id=vocabulary_id,
+        key=key,
+        data=data,
+        status=status,
+        parent_id=parent_id,
     )
     keyword.save()
 
@@ -203,35 +277,32 @@ async def suggest_keyword(
 
 
 @router.put(
-    '/{keyword_id:path}',
+    '/{keyword_id}',
 )
-async def set_keyword(
+async def update_keyword(
+        keyword_id: int,
         keyword_in: KeywordModelAdmin,
-        keyword_id: str = Path(..., title='Keyword identifier'),
         auth: Authorized = Depends(Authorize(ODPScope.KEYWORD_ADMIN)),
         _=Depends(validate_keyword_input),
 ) -> KeywordModel:
     """
-    Create or update a keyword. Requires scope `odp.keyword:admin`.
+    Update a keyword. Requires scope `odp.keyword:admin`.
     """
-    if keyword := Session.get(Keyword, keyword_id):
-        command = AuditCommand.update
-    else:
-        command = AuditCommand.insert
-        keyword = Keyword(
-            id=keyword_id,
-            parent_id=keyword_in.parent_id,
-        )
+    if not (keyword := Session.execute(
+            select(Keyword).where(Keyword.id == keyword_id)
+    ).scalar_one_or_none()):
+        raise HTTPException(HTTP_404_NOT_FOUND)
 
     if (
+            keyword.key != keyword_in.key or
             keyword.data != keyword_in.data or
             keyword.status != keyword_in.status or
-            keyword.child_schema_id != keyword_in.child_schema_id
+            keyword.parent_id != keyword_in.parent_id
     ):
+        keyword.key = keyword_in.key
         keyword.data = keyword_in.data
         keyword.status = keyword_in.status
-        keyword.child_schema_id = keyword_in.child_schema_id
-        keyword.child_schema_type = SchemaType.keyword if keyword_in.child_schema_id else None
+        keyword.parent_id = keyword_in.parent_id
 
         keyword.save()
 
@@ -239,7 +310,7 @@ async def set_keyword(
             auth,
             keyword,
             datetime.now(timezone.utc),
-            command,
+            AuditCommand.update,
         )
 
     return output_keyword_model(keyword)

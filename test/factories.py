@@ -265,7 +265,6 @@ class VocabularyFactory(ODPModelFactory):
 
     id = factory.Sequence(lambda n: id_from_fake('word', n))
     uri = factory.Faker('url')
-    scope = factory.SubFactory(ScopeFactory, type='odp')
     schema = factory.SubFactory(SchemaFactory, type='keyword')
     static = factory.LazyFunction(lambda: randint(0, 1))
 
@@ -284,7 +283,7 @@ class KeywordFactory(ODPModelFactory):
     def children(obj, create, _):
         if create:
             if not obj.parent_id or not obj.parent.parent_id:
-                KeywordFactory.create_batch(randint(0, 4), parent_id=obj.id, vocabulary=obj.vocabulary)
+                KeywordFactory.create_batch(randint(0, 7), parent_id=obj.id, vocabulary=obj.vocabulary)
 
 
 class TagFactory(ODPModelFactory):

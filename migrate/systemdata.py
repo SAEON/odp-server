@@ -210,8 +210,6 @@ def init_vocabularies():
         vocabulary = Session.get(Vocabulary, vocabulary_id) or Vocabulary(id=vocabulary_id)
         vocabulary.uri = vocabulary_spec['uri']
         vocabulary.static = vocabulary_spec.get('static', False)
-        vocabulary.scope_id = vocabulary_spec['scope_id']
-        vocabulary.scope_type = ScopeType.odp
         vocabulary.schema_id = vocabulary_spec['schema_id']
         vocabulary.schema_type = SchemaType.vocabulary if vocabulary.schema_id.startswith('Vocabulary') else SchemaType.keyword
         vocabulary.save()

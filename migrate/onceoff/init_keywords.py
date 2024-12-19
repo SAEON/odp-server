@@ -1,6 +1,6 @@
 from sqlalchemy import select, text
 
-from odp.const.db import KeywordStatus, SchemaType
+from odp.const.db import KeywordStatus
 from odp.db import Session
 from odp.db.models import Keyword
 
@@ -32,26 +32,16 @@ def legacy_terms():
 
 
 def institutions():
-    def add(title, abbr, ror=None):
-        if not Session.get(Keyword, title):
+    def add(key, abbr, ror=None):
+        if not Session.execute(
+                select(Keyword).where(Keyword.vocabulary_id == 'Institution').where(Keyword.key == key)
+        ).scalar_one_or_none():
             Keyword(
-                id=f'Institution:{title}',
-                parent_id='Institution',
+                vocabulary_id='Institution',
+                key=key,
+                data=dict(key=key, abbr=abbr, ror=ror),
                 status=KeywordStatus.approved,
-                data=dict(
-                    title=title,
-                    abbr=abbr,
-                    ror=ror,
-                )).save()
-
-    if not Session.get(Keyword, 'Institution'):
-        Keyword(
-            id='Institution',
-            data={},
-            status=KeywordStatus.approved,
-            child_schema_id='Keyword.Institution',
-            child_schema_type=SchemaType.keyword
-        ).save()
+            ).save()
 
     add('South African Environmental Observation Network', 'SAEON', 'https://ror.org/041j42q70')
     add('Department of Forestry, Fisheries and the Environment', 'DFFE', 'https://ror.org/01vm69c87')
