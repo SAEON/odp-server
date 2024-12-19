@@ -66,7 +66,5 @@ ODP.Migrate:
     - odp.provider:admin
     - odp.record:admin
     - odp.record:migrate
-    - odp.vocabulary:infrastructure
-    - odp.vocabulary:project
   grant_types:
     - client_credentials

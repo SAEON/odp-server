@@ -40,7 +40,6 @@ from odp.db.models import (
     RecordTagAudit,
     Tag,
     User,
-    VocabularyTerm,
 )
 
 router = APIRouter()

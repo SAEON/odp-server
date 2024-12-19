@@ -15,7 +15,7 @@ from odp.config import config
 from odp.const import ODPScope
 from odp.const.db import ScopeType, TagType
 from odp.db import Session
-from odp.db.models import Archive, CollectionTag, RecordTag, Scope, Tag, Vocabulary
+from odp.db.models import Archive, CollectionTag, RecordTag, Scope, Tag
 from odp.lib.auth import get_client_permissions, get_user_permissions
 from odp.lib.hydra import HydraAdminAPI, OAuth2TokenIntrospection
 
@@ -177,17 +177,6 @@ class UntagAuthorize(BaseAuthorize):
             raise HTTPException(HTTP_404_NOT_FOUND)
 
         return _authorize_request(request, ODPScope(tag_scope_id))
-
-
-class VocabularyAuthorize(BaseAuthorize):
-    async def __call__(self, request: Request, vocabulary_id: str) -> Authorized:
-        if not (vocabulary_scope_id := Session.execute(
-                select(Vocabulary.scope_id).
-                where(Vocabulary.id == vocabulary_id)
-        ).scalar_one_or_none()):
-            raise HTTPException(HTTP_404_NOT_FOUND)
-
-        return _authorize_request(request, ODPScope(vocabulary_scope_id))
 
 
 def select_scopes(

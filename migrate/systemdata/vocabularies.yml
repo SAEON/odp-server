@@ -1,15 +1,12 @@
 Infrastructure:
   uri: https://odp.saeon.ac.za/vocab/infrastructure
-  scope_id: odp.vocabulary:infrastructure
   schema_id: Vocabulary.Infrastructure
 
 Project:
   uri: https://odp.saeon.ac.za/vocab/project
-  scope_id: odp.vocabulary:project
   schema_id: Vocabulary.Project
 
 SDG:
   uri: https://odp.saeon.ac.za/vocab/sdg
-  static: true
-  scope_id: odp.vocabulary:sdg
   schema_id: Keyword.SDG
+  static: true

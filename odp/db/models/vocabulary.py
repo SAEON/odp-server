@@ -1,7 +1,7 @@
 from sqlalchemy import Boolean, CheckConstraint, Column, Enum, ForeignKeyConstraint, String
 from sqlalchemy.orm import relationship
 
-from odp.const.db import SchemaType, ScopeType
+from odp.const.db import SchemaType
 from odp.db import Base
 
 
@@ -21,26 +21,14 @@ class Vocabulary(Base):
             f"schema_type in ('{SchemaType.keyword}', '{SchemaType.vocabulary}')",
             name='vocabulary_schema_type_check',
         ),
-        ForeignKeyConstraint(
-            ('scope_id', 'scope_type'), ('scope.id', 'scope.type'),
-            name='vocabulary_scope_fkey', ondelete='RESTRICT',
-        ),
-        CheckConstraint(
-            f"scope_type = '{ScopeType.odp}'",
-            name='vocabulary_scope_type_check',
-        ),
     )
 
     id = Column(String, primary_key=True)
-    uri = Column(String)
+    uri = Column(String)  # todo: not null
 
     schema_id = Column(String, nullable=False)
     schema_type = Column(Enum(SchemaType), nullable=False)
     schema = relationship('Schema')
-
-    scope_id = Column(String, nullable=False)
-    scope_type = Column(Enum(ScopeType), nullable=False)
-    scope = relationship('Scope')
 
     # if static, keywords are maintained by the system
     static = Column(Boolean, nullable=False, server_default='false')
@@ -48,4 +36,4 @@ class Vocabulary(Base):
     # view of associated keywords (one-to-many)
     keywords = relationship('Keyword', viewonly=True)
 
-    _repr_ = 'id', 'schema_id', 'scope_id', 'static'
+    _repr_ = 'id', 'uri', 'schema_id', 'static'
