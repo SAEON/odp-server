@@ -36,6 +36,12 @@ def ris_example():
         return json.load(f)
 
 
+def ranked_metadata_example() -> list:
+    example_file = schema_dir / 'metadata' / 'saeon' / 'ranked-iso19115-example.json'
+    with open(example_file) as f:
+        return json.load(f)
+
+
 def isequal(x, y):
     """Perform a deep comparison, useful for comparing metadata records.
     Lists are compared as if they were sets."""

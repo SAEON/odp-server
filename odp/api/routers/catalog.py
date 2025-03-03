@@ -164,13 +164,13 @@ async def search_records(
     )
 
     if text_query and (text_query := text_query.strip()):
-        stmt = stmt.add_columns(func.plainto_tsquery('english', text_query).column_valued('query'))
-        stmt = stmt.where(text('full_text @@ query'))
+        ts_query = func.plainto_tsquery('english', text_query)
+        stmt = stmt.where(CatalogRecord.full_text.op('@@')(ts_query))
         if sort == SearchResultSort.RANK_DESC:
             # the third parameter to ts_rank_cd is a normalization bit mask:
             # 1 = divides the rank by 1 + the logarithm of the document length
             # 4 = divides the rank by the mean harmonic distance between extents
-            stmt = stmt.add_columns(func.ts_rank_cd('full_text', 'query', 1 | 4).label('rank'))
+            stmt = stmt.add_columns(func.ts_rank_cd(CatalogRecord.full_text, ts_query, 1 | 4).label('rank'))
 
     if facet_query is not None:
         if not isinstance(facet_query, dict):
