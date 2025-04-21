@@ -28,9 +28,13 @@ class ArchiveModule:
 
 
 def run_all():
+    archive_modules = []
     archive_dir = str(Path(__file__).parent)
     for mod_info in iter_modules([archive_dir]):
         mod = import_module(f'odp.archive.{mod_info.name}')
         for cls in mod.__dict__.values():
             if isinstance(cls, type) and issubclass(cls, ArchiveModule) and cls is not ArchiveModule:
-                cls().run()
+                archive_modules += [cls()]
+
+    for archive_module in archive_modules:
+        archive_module.run()
