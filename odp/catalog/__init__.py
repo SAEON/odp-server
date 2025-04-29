@@ -9,7 +9,8 @@ from odp.api.models import PublishedRecordModel, RecordModel
 from odp.api.routers.record import output_record_model
 from odp.const import ODPCatalog, ODPCollectionTag, ODPMetadataSchema, ODPRecordTag
 from odp.db import Session
-from odp.db.models import Catalog as CatalogORM, CatalogRecord, CatalogRecordFacet, Collection, Provider, PublishedRecord, Record, RecordTag
+from odp.db.models import Catalog as CatalogORM, CatalogRecord, CatalogRecordFacet, Collection, Provider, \
+    PublishedRecord, Record, RecordTag
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,8 @@ class Catalog:
             where(CatalogRecord.error_count < self.max_attempts)
         ).scalars().all()
 
-        logger.info(f'{self.catalog_id} catalog: {(total := len(unsynced_catalog_records))} records selected for external sync')
+        logger.info(
+            f'{self.catalog_id} catalog: {(total := len(unsynced_catalog_records))} records selected for external sync')
         synced = 0
 
         for catalog_record in unsynced_catalog_records:
@@ -347,11 +349,19 @@ class Catalog:
         if catalog_record.published:
             published_record = output_published_record_model(catalog_record)
 
-            catalog_record.full_text = select(
-                func.to_tsvector('english', self.create_text_index_data(published_record))
-            ).scalar_subquery()
+            title, free_text = self.create_text_index_data(published_record)
 
-            catalog_record.keywords = self.create_keyword_index_data(published_record)
+            keywords = self.create_keyword_index_data(published_record)
+
+            catalog_record.full_text = (
+                (func.setweight(func.to_tsvector('english', ' '.join(keywords)), 'A'))
+                .op('||')
+                (func.setweight(func.to_tsvector('english', title), 'B'))
+                .op('||')
+                (func.setweight(func.to_tsvector('english', free_text), 'C'))
+            )
+
+            catalog_record.keywords = keywords
 
             catalog_record.facets = []
             for facet_name, facet_values in self.create_facet_index_data(published_record).items():
@@ -393,8 +403,8 @@ class Catalog:
 
     def create_text_index_data(
             self, published_record: PublishedRecordModel
-    ) -> str:
-        """Create a string from metadata field values to be indexed for full text search."""
+    ) -> tuple[str, str]:
+        """Create a title, free_text tuple from metadata field values to be indexed for full text search."""
         raise NotImplementedError
 
     def create_keyword_index_data(

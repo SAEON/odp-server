@@ -1,0 +1,113 @@
+{
+  "titles": {
+    "no_search_terms": "Amet dolor sit amet, consectetur adipiscing elit. Adipiscing Sed enim.",
+    "no_harmonic_distance": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed enim.",
+    "harmonic_distance": "Lorem dolor sit amet, consectetur adipiscing elit. ipsum Sed enim."
+  },
+  "abstracts": {
+    "short-few_search_terms-no_harmonic_distance": "Lorem ipsum dolor sit amet, consectetur Lorem ipsum. In et varius velit. Nulla facilisi. Cras ultricies dui nec ex malesuada, vitae iaculis tortor sollicitudin. Proin venenatis porta ex, sit amet posuere nunc bibendum vitae. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nam vitae viverra urna. Nullam sit amet semper.",
+    "short-few_search_terms-harmonic_distance": "Lorem dolor sit amet, consectetur Lorem. In et varius velit. Nulla facilisi. ipsum Cras ultricies dui nec ex malesuada, vitae iaculis tortor sollicitudin. Proin ipsum venenatis porta ex, sit amet posuere nunc bibendum vitae. Lorem dolor sit amet, consectetur adipiscing elit. Nam vitae viverra urna. Nullam sit amet semper ipsum.",
+    "short-many_search_terms-no_harmonic_distance": "Lorem ipsum dolor sit amet, consectetur Lorem ipsum. In et varius velit. Nulla facilisi. Cras ultricies dui nec Lorem ipsum, vitae iaculis tortor sollicitudin. Lorem ipsum porta ex, sit amet posuere nunc bibendum vitae. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum viverra urna. Nullam sit amet semper.",
+    "short-many_search_terms-harmonic_distance": "Lorem dolor sit amet, consectetur Lorem. In et varius velit ipsum. Nulla facilisi. Cras ipsum ultricies dui nec Lorem, vitae iaculis tortor sollicitudin. Lorem porta ex, sit amet posuere nunc ipsum bibendum vitae. Lorem dolor sit amet, consectetur ipsum adipiscing elit. Lorem viverra urna. ipsum Nullam sit amet semper ipsum.",
+    "long-few_search_terms-no_harmonic_distance": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque ultrices leo quis libero fringilla auctor. Cras ut metus congue, posuere lectus nec, condimentum eros. Nam scelerisque arcu vel pharetra sodales. Nulla mauris tortor, Lorem ipsum ultricies in, mattis ac nisi. Vivamus commodo felis et Integer gravida, vel vulputate sapien scelerisque. Sed porttitor vehicula urna, dictum feugiat sem eleifend eget. Morbi lacinia finibus mollis. Ut ullamcorper pulvinar vulputate. Integer quis blandit ligula, sed eleifend lacus. Pellentesque eu turpis eu risus dictum eleifend. Duis sit amet odio tincidunt nibh lobortis iaculis. Fusce in tempor orci. In orci dolor, fermentum eget leo id, hendrerit interdum mi. Cras vitae turpis quis orci aliquet porttitor. Cras a ligula nunc. Phasellus id ultricies nunc. Donec condimentum est eu turpis faucibus vulputate. Pellentesque non tortor vel ex congue varius eget vel eros. Quisque finibus cursus neque eu porta. Maecenas maximus cursus pulvinar. Pellentesque justo odio, dictum efficitur metus a, facilisis vestibulum enim. Sed hendrerit, diam a blandit posuere, enim massa convallis felis, ac ullamcorper nibh felis et metus.Aenean accumsan tortor non tincidunt gravida. In faucibus dictum placerat. Nulla facilisi. Phasellus ullamcorper Lorem ipsum eros accumsan, sit amet consectetur magna posuere. Donec vel metus et risus finibus.",
+    "long-few_search_terms-harmonic_distance": "Lorem dolor sit amet, consectetur adipiscing elit. Pellentesque ultrices leo quis libero fringilla auctor. Cras ut metus congue, posuere lectus nec, condimentum eros ipsum. Nam scelerisque arcu vel pharetra sodales. Nulla mauris tortor, Lorem ultricies in, mattis ac nisi. Vivamus commodo felis et Integer gravida, vel vulputate sapien scelerisque. Sed porttitor vehicula urna, dictum feugiat sem eleifend eget. Morbi lacinia finibus mollis. Ut ullamcorper pulvinar vulputate. Integer quis blandit ligula, sed eleifend lacus. Pellentesque eu turpis eu risus dictum eleifend. Duis sit amet odio tincidunt nibh lobortis iaculis. Fusce in tempor orci. In orci dolor, ipsum fermentum eget leo id, hendrerit interdum mi. Cras vitae turpis quis orci aliquet porttitor. Cras a ligula nunc. Phasellus id ultricies nunc. Donec condimentum est eu turpis faucibus vulputate. Pellentesque non tortor vel ex congue varius eget vel eros. Quisque finibus cursus neque eu porta. Maecenas maximus cursus pulvinar. Pellentesque justo odio, dictum efficitur metus a, facilisis vestibulum enim. Sed hendrerit, diam a blandit posuere, enim massa convallis felis, ac ullamcorper nibh felis et metus.Aenean accumsan tortor non tincidunt gravida. In faucibus dictum placerat. Nulla facilisi. Phasellus ullamcorper Lorem eros accumsan, sit amet consectetur magna posuere. Donec vel metus et risus finibus ipsum.",
+    "long-many_search_terms-no_harmonic_distance": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque ultrices leo quis libero fringilla auctor. Cras ut metus congue, posuere lectus nec, condimentum eros. Nam scelerisque arcu vel pharetra sodales. Nulla mauris tortor, Lorem ipsum ultricies in, mattis ac nisi. Vivamus commodo felis et Lorem ipsum, vel vulputate sapien scelerisque. Sed porttitor vehicula urna, dictum feugiat sem eleifend eget. Morbi lacinia finibus mollis. Ut ullamcorper Lorem ipsum. Integer quis blandit ligula, sed eleifend lacus. Pellentesque eu turpis eu risus dictum eleifend. Pellentesque justo amet odio tincidunt nibh lobortis iaculis. Fusce in tempor orci. In orci dolor, fermentum eget leo id, hendrerit interdum mi. Cras vitae turpis quis orci aliquet porttitor. Cras a ligula nunc. Phasellus id Lorem ipsum. Donec condimentum est eu turpis faucibus vulputate. Pellentesque non tortor vel ex congue varius eget vel eros. Quisque finibus cursus neque eu porta. Maecenas maximus cursus pulvinar. Pellentesque justo odio, dictum efficitur metus a, facilisis vestibulum enim. Sed hendrerit, diam a blandit posuere, enim massa convallis felis, ac ullamcorper nibh felis et metus. Aenean accumsan tortor non tincidunt gravida. In faucibus dictum placerat. Nulla facilisi. Phasellus ullamcorper Lorem ipsum eros accumsan, sit amet consectetur magna posuere. Donec vel metus et risus finibus.",
+    "long-many_search_terms-harmonic_distance": "Lorem dolor sit amet, consectetur adipiscing elit. Pellentesque ultrices leo quis libero fringilla auctor. ipsum Cras ut metus congue, posuere lectus nec, condimentum eros. Nam scelerisque arcu vel pharetra sodales. Nulla mauris tortor, Lorem ultricies in, mattis ac nisi. Vivamus commodo felis et Lorem, vel vulputate sapien scelerisque. ipsum Sed porttitor vehicula urna, dictum feugiat sem ipsum eleifend eget. Morbi lacinia finibus mollis. Ut ullamcorper Lorem. Integer quis blandit ligula, sed eleifend lacus. Pellentesque eu turpis eu risus dictum eleifend. Pellentesque justo amet odio tincidunt nibh lobortis iaculis. ipsum Fusce in tempor orci. In orci dolor, fermentum eget leo id, hendrerit interdum mi. Cras vitae turpis quis orci aliquet porttitor. Cras a ligula nunc. Phasellus id Lorem. Donec condimentum est eu turpis faucibus vulputate. Pellentesque non tortor vel ex congue varius eget vel eros. Quisque finibus cursus neque eu porta. Maecenas maximus cursus pulvinar. Pellentesque ipsum justo odio, dictum efficitur metus a, facilisis vestibulum enim. Sed hendrerit, diam a blandit posuere, enim massa convallis felis, ac ullamcorper nibh felis et metus. Aenean accumsan tortor non tincidunt gravida. In faucibus dictum placerat. Nulla facilisi. Phasellus ullamcorper Lorem eros accumsan, sit amet consectetur magna posuere. Donec vel metus et risus finibus ipsum."
+  },
+  "keywords": {
+    "all_search_terms": [
+      {
+        "keywordType": "general",
+        "keyword": "Lorem"
+      },
+      {
+        "keywordType": "general",
+        "keyword": "ipsum"
+      },
+      {
+        "keywordType": "general",
+        "keyword": "dolor"
+      }
+    ],
+    "no_search_terms": [
+      {
+        "keywordType": "general",
+        "keyword": "consectetur"
+      },
+      {
+        "keywordType": "general",
+        "keyword": "Nulla"
+      },
+      {
+        "keywordType": "general",
+        "keyword": "dolor"
+      }
+    ]
+  },
+  "generated_doi_ranked_order": ["0", "16", "4", "2", "20", "6", "32", "8", "12", "18", "1", "24", "33", "14", "17", "22", "28", "10", "36", "34", "30", "40", "26", "5", "44", "37", "21", "3", "9", "38", "25", "41", "19", "35", "46", "13", "42", "29", "7", "45", "11", "15", "23", "39", "27", "31", "43", "47"],
+  "example": {
+    "doi": "1OA1933M62/index-metadata-example",
+    "title": "",
+    "date": "2020-10-29",
+    "responsibleParties": [
+      {
+        "individualName": "Lorem ipsum",
+        "organizationName": "Dolor Sit",
+        "role": "Amet"
+      }
+    ],
+    "extent": {
+      "geographicElements": [
+        {
+          "boundingBox": {
+            "westBoundLongitude": 17.9,
+            "eastBoundLongitude": 18.3,
+            "southBoundLatitude": -34.4,
+            "northBoundLatitude": -34.0
+          }
+        }
+      ],
+      "temporalElement": {
+        "startTime": "2019-11-01T00:00:00+02:00",
+        "endTime": "2019-12-01T00:00:00+02:00"
+      }
+    },
+    "languages": [
+      "en"
+    ],
+    "characterSet": "utf8",
+    "abstract": "",
+    "distributionFormats": [
+      {
+        "formatName": "ZIP"
+      }
+    ],
+    "spatialRepresentationTypes": [
+      "image",
+      "stereoModel"
+    ],
+    "referenceSystemName": {
+      "codeSpace": "EPSG",
+      "version": "4148"
+    },
+    "fileIdentifier": "000006",
+    "metadataStandardName": "ISO19115",
+    "metadataStandardVersion": "ISO19115 - SAEON Profile",
+    "metadataLanguage": "en",
+    "metadataCharacterSet": "utf8",
+    "metadataTimestamp": "2020-10-29T12:34:56+02:00",
+    "purpose": "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+    "scope": "dataset",
+    "status": [
+      "completed",
+      "historicalArchive"
+    ],
+    "descriptiveKeywords": [],
+    "constraints": [
+      {
+        "rights": "Attribution 4.0 International (CC BY 4.0)",
+        "rightsURI": "https://creativecommons.org/licenses/by/4.0/"
+      }
+    ]
+  }
+}
