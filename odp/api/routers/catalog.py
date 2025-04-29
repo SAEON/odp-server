@@ -3,7 +3,7 @@ from datetime import date
 from enum import Enum
 from functools import partial
 from math import ceil
-from typing import Any, Optional
+from typing import Any, Optional, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -393,3 +393,76 @@ async def redirect_to(
     url += catalog_record.record.doi if catalog_record.record.doi else catalog_record.record_id
 
     return RedirectResponse(url)
+
+
+@router.get(
+    '/{catalog_id}/subset',
+    response_model=SearchResult,
+    dependencies=[Depends(Authorize(ODPScope.CATALOG_SEARCH))],
+    description="Return a catalog's subset published records.",
+)
+async def records_subset(
+        catalog_id: str,
+        record_id_or_doi_list: List[str] = Query(..., alias="record_id_or_doi_list"),
+        page: int = 1,
+        size: int = 50
+):
+
+    if not Session.get(Catalog, catalog_id):
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    stmt = (
+        select(CatalogRecord)
+        .where(CatalogRecord.catalog_id == catalog_id)
+        .where(CatalogRecord.record_id.in_(record_id_or_doi_list))
+        .where(CatalogRecord.published)
+        .where(CatalogRecord.searchable)
+    )
+
+
+
+    total = Session.execute(
+        select(func.count())
+        .select_from(stmt.subquery())
+    ).scalar_one()
+
+
+    order_by = CatalogRecord.timestamp.desc()
+
+    limit = size or total
+    items = [
+        output_published_record_model(row.CatalogRecord) for row in Session.execute(
+            stmt.
+            order_by(order_by).
+            offset(limit * (page - 1)).
+            limit(limit)
+        )
+    ]
+
+    facets = {}
+    facet_subquery = select(CatalogRecordFacet).subquery()
+    for row in Session.execute(
+        select(
+            facet_subquery.c.facet,
+            facet_subquery.c.value,
+            func.count(),
+        )
+        .join_from(
+            stmt.subquery(),
+            facet_subquery,
+        )
+        .group_by(
+            facet_subquery.c.facet,
+            facet_subquery.c.value,
+        )
+    ):
+        facets.setdefault(row.facet, [])
+        facets[row.facet] += [(row.value, row.count)]
+
+    return SearchResult(
+        facets=facets,
+        items=items,
+        total=total,
+        page=page,
+        pages=ceil(total / limit) if limit else 0,
+    )
