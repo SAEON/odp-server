@@ -6,9 +6,9 @@ import sys
 rootdir = pathlib.Path(__file__).parent.parent
 sys.path.append(str(rootdir))
 
-import odp.archive
 import odp.logfile
+import odp.svc
 
 if __name__ == '__main__':
     odp.logfile.initialize()
-    odp.archive.run_all()
+    odp.svc.run_service('archive')

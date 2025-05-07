@@ -3,16 +3,16 @@ import logging
 
 from sqlalchemy import select
 
-from odp.archive import ArchiveModule
 from odp.const.db import ResourceStatus
 from odp.db import Session
 from odp.db.models import Resource
 from odp.lib.archive import ArchiveAdapter, ArchiveError
+from odp.svc import ServiceModule
 
 logger = logging.getLogger(__name__)
 
 
-class FilePurgeModule(ArchiveModule):
+class FilePurgeModule(ServiceModule):
 
     def exec(self):
         resources_to_delete = Session.execute(
