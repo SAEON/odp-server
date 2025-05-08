@@ -6,6 +6,11 @@ SAEON.ISO19115:
   type: metadata
   uri: https://odp.saeon.ac.za/schema/metadata/saeon/iso19115
 
+SAEON.EML:
+  type: metadata
+  uri: https://odp.saeon.ac.za/schema/metadata/saeon/eml
+  template_uri: https://odp.saeon.ac.za/schema/metadata/saeon/eml-template
+
 DataCite.4.3:
   type: metadata
   uri: https://odp.saeon.ac.za/schema/metadata/datacite/kernel-4.3
