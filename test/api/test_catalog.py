@@ -1,5 +1,5 @@
 import os
-from copy import deepcopy, copy
+from copy import copy, deepcopy
 from datetime import datetime
 from random import randint
 
@@ -15,6 +15,9 @@ from odp.db.models import Catalog, Tag
 from test import datacite4_example, isequal, iso19115_example, ris_example
 from test.api import assert_forbidden, assert_new_timestamp, assert_not_found, assert_redirect
 from test.factories import CatalogFactory, CollectionTagFactory, RecordFactory, RecordTagFactory
+from test import TestSession, isequal, datacite4_example, iso19115_example, eml_example, ris_example
+from test.api.assertions import assert_forbidden, assert_new_timestamp, assert_not_found, assert_redirect
+from test.factories import CatalogFactory, CollectionTagFactory, FactorySession, RecordFactory, RecordTagFactory
 
 
 @pytest.fixture
@@ -53,6 +56,7 @@ def static_publishing_data():
     migrate.systemdata.init_vocabularies()
     migrate.systemdata.init_tags()
     migrate.systemdata.init_catalogs()
+    migrate.systemdata.Session.commit()
 
 
 @pytest.fixture(params=['SAEON', 'MIMS'])
