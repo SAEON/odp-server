@@ -18,6 +18,10 @@ def iso19115_example():
     with open(example_file) as f:
         return json.load(f)
 
+def eml_example():
+    example_file = schema_dir / 'metadata' / 'saeon' / 'eml-example.json'
+    with open(example_file) as f:
+        return json.load(f)
 
 def ris_example():
     example_file = schema_dir / 'metadata' / 'ris' / 'citation-example.json'

@@ -35,6 +35,8 @@ def create_metadata(record, n):
             metadata = datacite4_example()
         elif record.schema_id == 'SAEON.ISO19115':
             metadata = iso19115_example()
+        elif record.schema_id == 'SAEON.EML':
+            metadata = iso19115_example()
     else:
         metadata = {'foo': f'test-{n}'}
 
@@ -282,7 +284,7 @@ class RecordFactory(ODPModelFactory):
     validity = factory.LazyAttribute(lambda r: dict(valid=r.use_example_metadata))
 
     collection = factory.SubFactory(CollectionFactory)
-    schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115')))
+    schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115', 'SAEON.EML')))
     schema_type = 'metadata'
     schema = factory.LazyAttribute(lambda r: Session.get(Schema, (r.schema_id, 'metadata')) or
                                              SchemaFactory(id=r.schema_id, type='metadata'))
