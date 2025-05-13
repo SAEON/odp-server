@@ -17,6 +17,32 @@ def test_validity():
         assert output_schema.validate().valid
         assert output_schema.evaluate(JSON(output_json)).valid
 
+def test_validity_iso_and_eml():
+    with catalog.cache() as cacheid:
+        # ISO19115 to DataCite4
+        iso_schema = catalog.get_schema(URI('https://odp.saeon.ac.za/schema/metadata/saeon/iso19115'), cacheid=cacheid)
+        iso_json = catalog.load_json(URI('https://odp.saeon.ac.za/schema/metadata/saeon/iso19115-example'))
+
+        datacite_schema = catalog.get_schema(URI('https://odp.saeon.ac.za/schema/metadata/saeon/datacite4'), cacheid=cacheid)
+        datacite_json_from_iso = catalog.load_json(URI('https://odp.saeon.ac.za/schema/metadata/saeon/datacite4-example-translated'))
+
+        # Validate ISO input and translated DataCite4 output
+        assert iso_schema.validate().valid
+        assert iso_schema.evaluate(JSON(iso_json)).valid
+        assert datacite_schema.validate().valid
+        assert datacite_schema.evaluate(JSON(datacite_json_from_iso)).valid
+
+        # EML to DataCite4
+        eml_schema = catalog.get_schema(URI('https://odp.saeon.ac.za/schema/metadata/saeon/eml'), cacheid=cacheid)
+        eml_json = catalog.load_json(URI('https://odp.saeon.ac.za/schema/metadata/saeon/eml-example'))
+
+        datacite_json_from_eml = catalog.load_json(URI('https://odp.saeon.ac.za/schema/metadata/saeon/datacite4-example-from-eml'))
+
+        # Validate EML input and translated DataCite4 output
+        assert eml_schema.validate().valid
+        assert eml_schema.evaluate(JSON(eml_json)).valid
+        assert datacite_schema.evaluate(JSON(datacite_json_from_eml)).valid
+
 
 def test_translate_iso19115_to_datacite():
     with catalog.cache() as cacheid:
