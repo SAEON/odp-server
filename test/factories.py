@@ -1,15 +1,47 @@
 import re
+import sys
 from datetime import datetime, timezone
-from random import choice, randint
+from random import choice, choices, randint
 
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 from faker import Faker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
+import odp.db
+from odp.db.models import (
+    Archive,
+    ArchiveResource,
+    Catalog,
+    Client,
+    Collection,
+    CollectionTag,
+    Keyword,
+    Package,
+    PackageTag,
+    Provider,
+    Record,
+    RecordTag,
+    Resource,
+    Role,
+    Schema,
+    Scope,
+    Tag,
+    User,
+    Vocabulary,
+)
+from test import datacite4_example, iso19115_example, eml_example
 from odp.db import Session
 from odp.db.models import (Catalog, Client, Collection, CollectionTag, Provider, Record, RecordTag, Role, Schema, Scope, Tag, User,
                            Vocabulary, VocabularyTerm)
 from test import datacite4_example, iso19115_example
+
+FactorySession = scoped_session(sessionmaker(
+    bind=odp.db.engine,
+    autocommit=False,
+    autoflush=False,
+    future=True,
+))
 
 fake = Faker()
 
@@ -29,32 +61,41 @@ def _sanitize_id(val):
     return re.sub(r'[^-.:\w]', '_', val)
 
 
-def create_metadata(record, n):
-    if record.use_example_metadata:
-        if record.schema_id == 'SAEON.DataCite4':
+def create_metadata(record_or_package, n):
+    try:
+        if record_or_package.status == 'pending':
+            return None
+    except AttributeError:
+        pass  # only applies to packages
+
+    if record_or_package.use_example_metadata:
+        if record_or_package.schema_id == 'SAEON.DataCite4':
             metadata = datacite4_example()
-        elif record.schema_id == 'SAEON.ISO19115':
+        elif record_or_package.schema_id == 'SAEON.ISO19115':
             metadata = iso19115_example()
         elif record.schema_id == 'SAEON.EML':
             metadata = iso19115_example()
     else:
         metadata = {'foo': f'test-{n}'}
 
-    if record.doi:
-        metadata |= {'doi': record.doi}
-    else:
-        metadata.pop('doi', None)
+    try:
+        if record_or_package.doi:
+            metadata |= {'doi': record_or_package.doi}
+        else:
+            metadata.pop('doi', None)
 
-    if record.parent_doi:
-        metadata.setdefault("relatedIdentifiers", [])
-        metadata["relatedIdentifiers"] += [{
-            "relatedIdentifier": record.parent_doi,
-            "relatedIdentifierType": "DOI",
-            "relationType": "IsPartOf"
-        }]
+        if record_or_package.parent_doi:
+            metadata.setdefault("relatedIdentifiers", [])
+            metadata["relatedIdentifiers"] += [{
+                "relatedIdentifier": record_or_package.parent_doi,
+                "relatedIdentifierType": "DOI",
+                "relationType": "IsPartOf"
+            }]
+    except AttributeError:
+        pass  # only applies to records
 
     # non-DOI relatedIdentifierType should be ignored for parent_id calculation
-    if not record.use_example_metadata and randint(0, 1):
+    if not record_or_package.use_example_metadata and randint(0, 1):
         metadata.setdefault("relatedIdentifiers", [])
         metadata["relatedIdentifiers"] += [{
             "relatedIdentifier": "foo",
@@ -63,7 +104,7 @@ def create_metadata(record, n):
         }]
 
     # non-IsPartOf relationType should be ignored for parent_id calculation
-    if not record.use_example_metadata and randint(0, 1):
+    if not record_or_package.use_example_metadata and randint(0, 1):
         metadata.setdefault("relatedIdentifiers", [])
         metadata["relatedIdentifiers"] += [{
             "relatedIdentifier": "bar",
@@ -72,6 +113,33 @@ def create_metadata(record, n):
         }]
 
     return metadata
+
+
+def create_package_key(package, n):
+    timestamp = datetime.now(timezone.utc)
+    date = timestamp.strftime('%Y_%m_%d')
+    return f'{package.provider.key}_{date}_{n:03}'
+
+
+def create_keyword_key(kw, n, invalid=False):
+    if kw.vocabulary.schema.uri.endswith('institution'):
+        return -1 if invalid else fake.word() + str(n)
+    elif kw.vocabulary.schema.uri.endswith('sdg'):
+        if kw.parent_id is None:
+            return '' if invalid else str(fake.pyint())
+        return '' if invalid else str(fake.pyfloat(min_value=0))
+
+
+def create_keyword_data(kw, n, invalid=False):
+    data = {'foo': 'bar'} if invalid else {'key': kw.key}
+    if kw.vocabulary.schema.uri.endswith('institution'):
+        data |= {'abbr': fake.word() + str(n)}
+    elif kw.vocabulary.schema.uri.endswith('sdg'):
+        if kw.parent_id is None:
+            data |= {'title': fake.job() + str(n), 'goal': fake.sentence() + str(n)}
+        else:
+            data |= {'target': fake.sentence() + str(n)}
+    return data
 
 
 def schema_uri_from_type(schema):
@@ -87,8 +155,11 @@ def schema_uri_from_type(schema):
             'https://odp.saeon.ac.za/schema/tag/record/migrated',
             'https://odp.saeon.ac.za/schema/tag/record/qc',
             'https://odp.saeon.ac.za/schema/tag/record/embargo',
-            'https://odp.saeon.ac.za/schema/tag/collection/infrastructure',
-            'https://odp.saeon.ac.za/schema/tag/collection/project',
+        ))
+    elif schema.type == 'keyword':
+        return choice((
+            'https://odp.saeon.ac.za/schema/keyword/institution',
+            'https://odp.saeon.ac.za/schema/keyword/sdg',
         ))
     elif schema.type == 'vocabulary':
         return choice((
@@ -101,7 +172,7 @@ def schema_uri_from_type(schema):
 
 class ODPModelFactory(SQLAlchemyModelFactory):
     class Meta:
-        sqlalchemy_session = Session
+        sqlalchemy_session = FactorySession
         sqlalchemy_session_persistence = 'commit'
 
 
@@ -118,9 +189,9 @@ class SchemaFactory(ODPModelFactory):
         model = Schema
 
     id = factory.Sequence(lambda n: f'{fake.word()}.{n}')
-    type = factory.LazyFunction(lambda: choice(('metadata', 'tag', 'vocabulary')))
+    type = factory.LazyFunction(lambda: choice(('metadata', 'tag', 'keyword', 'vocabulary')))
     uri = factory.LazyAttribute(schema_uri_from_type)
-    md5 = ''
+    md5 = factory.Faker('md5')
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
     @factory.post_generation
@@ -129,7 +200,7 @@ class SchemaFactory(ODPModelFactory):
         ``vocabulary`` keyword references work."""
         if obj.type == 'tag':
             for vocab_id in 'Infrastructure', 'Project':
-                if obj.uri.endswith(vocab_id.lower()) and not Session.get(Vocabulary, vocab_id):
+                if obj.uri.endswith(vocab_id.lower()) and not FactorySession.get(Vocabulary, vocab_id):
                     VocabularyFactory(
                         id=vocab_id,
                         schema=SchemaFactory(
@@ -158,6 +229,51 @@ class ProviderFactory(ODPModelFactory):
     name = factory.Sequence(lambda n: f'{fake.company()}.{n}')
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
+    @factory.post_generation
+    def users(obj, create, users):
+        if users:
+            for user in users:
+                obj.users.append(user)
+            if create:
+                FactorySession.commit()
+
+
+class PackageFactory(ODPModelFactory):
+    class Meta:
+        model = Package
+        exclude = ('parent_doi', 'use_example_metadata')
+
+    id = factory.Faker('uuid4')
+    key = factory.LazyAttributeSequence(create_package_key)
+    status = factory.LazyFunction(lambda: choices(('pending', 'submitted', 'archived', 'deleted'), weights=(12, 4, 3, 1))[0])
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    provider = factory.SubFactory(ProviderFactory)
+
+    schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115')))
+    schema_type = 'metadata'
+    schema = factory.LazyAttribute(lambda p: FactorySession.get(Schema, (p.schema_id, 'metadata')) or
+                                             SchemaFactory(id=p.schema_id, type='metadata'))
+    use_example_metadata = False
+    metadata_ = factory.LazyAttributeSequence(create_metadata)
+    validity = factory.LazyAttribute(lambda p: dict(valid=p.use_example_metadata))
+
+
+class ResourceFactory(ODPModelFactory):
+    class Meta:
+        model = Resource
+
+    id = factory.Faker('uuid4')
+    path = factory.Sequence(lambda n: f'{fake.uri(deep=randint(1, 4))}.{n}')
+    mimetype = factory.Faker('mime_type')
+    size = factory.LazyFunction(lambda: randint(1, sys.maxsize))
+    hash = factory.LazyAttribute(lambda r: fake.md5() if r.hash_algorithm == 'md5' else fake.sha256())
+    hash_algorithm = factory.LazyFunction(lambda: choice(('md5', 'sha256')))
+    title = factory.Faker('catch_phrase')
+    description = factory.Faker('sentence')
+    status = factory.LazyFunction(lambda: choices(('active', 'delete_pending'), weights=(9, 1))[0])
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    package = factory.SubFactory(PackageFactory)
+
 
 class CollectionFactory(ODPModelFactory):
     class Meta:
@@ -176,7 +292,12 @@ class ClientFactory(ODPModelFactory):
         model = Client
 
     id = factory.Sequence(lambda n: id_from_fake('catch_phrase', n))
-    collection_specific = factory.LazyFunction(lambda: randint(0, 1))
+    provider_specific = factory.LazyFunction(lambda: randint(0, 1))
+    provider = factory.Maybe(
+        'provider_specific',
+        yes_declaration=factory.SubFactory(ProviderFactory),
+        no_declaration=None,
+    )
 
     @factory.post_generation
     def scopes(obj, create, scopes):
@@ -184,24 +305,7 @@ class ClientFactory(ODPModelFactory):
             for scope in scopes:
                 obj.scopes.append(scope)
             if create:
-                Session.commit()
-
-    @factory.post_generation
-    def collections(obj, create, collections):
-        if collections:
-            for collection in collections:
-                obj.collections.append(collection)
-            if create:
-                Session.commit()
-
-
-class VocabularyTermFactory(ODPModelFactory):
-    class Meta:
-        model = VocabularyTerm
-
-    vocabulary = None
-    term_id = factory.Sequence(lambda n: id_from_fake('word', n))
-    data = factory.LazyAttribute(lambda t: {'id': t.term_id})
+                FactorySession.commit()
 
 
 class VocabularyFactory(ODPModelFactory):
@@ -209,14 +313,27 @@ class VocabularyFactory(ODPModelFactory):
         model = Vocabulary
 
     id = factory.Sequence(lambda n: id_from_fake('word', n))
-    scope = factory.SubFactory(ScopeFactory, type='odp')
-    schema = factory.SubFactory(SchemaFactory, type='vocabulary')
+    uri = factory.Faker('url')
+    schema = factory.SubFactory(SchemaFactory, type='keyword')
     static = factory.LazyFunction(lambda: randint(0, 1))
-    terms = factory.RelatedFactoryList(
-        VocabularyTermFactory,
-        factory_related_name='vocabulary',
-        size=lambda: randint(3, 5),
-    )
+
+
+class KeywordFactory(ODPModelFactory):
+    class Meta:
+        model = Keyword
+
+    key = factory.LazyAttributeSequence(create_keyword_key)
+    data = factory.LazyAttributeSequence(create_keyword_data)
+    status = factory.LazyFunction(lambda: choices(('proposed', 'approved', 'rejected', 'obsolete'), weights=(3, 14, 1, 2))[0])
+    parent = None
+    parent_id = None
+    vocabulary = factory.SubFactory(VocabularyFactory)
+
+    @factory.post_generation
+    def children(obj, create, _):
+        if create:
+            if not obj.parent_id or not obj.parent.parent_id:
+                KeywordFactory.create_batch(randint(0, 4), parent_id=obj.id, vocabulary=obj.vocabulary)
 
 
 class TagFactory(ODPModelFactory):
@@ -248,6 +365,7 @@ class UserFactory(ODPModelFactory):
     email = factory.Sequence(lambda n: f'{fake.email()}.{n}')
     active = factory.LazyFunction(lambda: randint(0, 1))
     verified = factory.LazyFunction(lambda: randint(0, 1))
+    picture = factory.Faker('image_url')
 
     @factory.post_generation
     def roles(obj, create, roles):
@@ -255,7 +373,7 @@ class UserFactory(ODPModelFactory):
             for role in roles:
                 obj.roles.append(role)
             if create:
-                Session.commit()
+                FactorySession.commit()
 
 
 class CollectionTagFactory(ODPModelFactory):
@@ -266,6 +384,17 @@ class CollectionTagFactory(ODPModelFactory):
     tag = factory.SubFactory(TagFactory, type='collection')
     user = factory.SubFactory(UserFactory)
     data = {}
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+
+
+class PackageTagFactory(ODPModelFactory):
+    class Meta:
+        model = PackageTag
+
+    package = factory.SubFactory(PackageFactory)
+    tag = factory.SubFactory(TagFactory, type='package')
+    user = factory.SubFactory(UserFactory)
+    data = factory.LazyFunction(lambda: {'foo': fake.word()})
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
 
@@ -286,7 +415,7 @@ class RecordFactory(ODPModelFactory):
     collection = factory.SubFactory(CollectionFactory)
     schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115', 'SAEON.EML')))
     schema_type = 'metadata'
-    schema = factory.LazyAttribute(lambda r: Session.get(Schema, (r.schema_id, 'metadata')) or
+    schema = factory.LazyAttribute(lambda r: FactorySession.get(Schema, (r.schema_id, 'metadata')) or
                                              SchemaFactory(id=r.schema_id, type='metadata'))
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
@@ -322,7 +451,7 @@ class RoleFactory(ODPModelFactory):
             for scope in scopes:
                 obj.scopes.append(scope)
             if create:
-                Session.commit()
+                FactorySession.commit()
 
     @factory.post_generation
     def collections(obj, create, collections):
@@ -330,4 +459,26 @@ class RoleFactory(ODPModelFactory):
             for collection in collections:
                 obj.collections.append(collection)
             if create:
-                Session.commit()
+                FactorySession.commit()
+
+
+class ArchiveFactory(ODPModelFactory):
+    class Meta:
+        model = Archive
+
+    id = factory.Sequence(lambda n: f'{fake.slug()}.{n}')
+    type = factory.LazyFunction(lambda: choice(('filestore', 'website')))
+    download_url = factory.Faker('url')
+    upload_url = factory.Faker('url')
+    scope = factory.SubFactory(ScopeFactory, type='odp')
+
+
+class ArchiveResourceFactory(ODPModelFactory):
+    class Meta:
+        model = ArchiveResource
+
+    archive = factory.SubFactory(ArchiveFactory)
+    resource = factory.SubFactory(ResourceFactory)
+    path = factory.Sequence(lambda n: f'{fake.uri(deep=randint(1, 4))}.{n}')
+    status = factory.LazyFunction(lambda: choices(('pending', 'valid', 'missing', 'corrupt'), weights=(4, 14, 1, 1))[0])
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
