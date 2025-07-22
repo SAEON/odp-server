@@ -78,41 +78,45 @@ class SAEONCatalog(Catalog):
 
     def create_text_index_data(
             self, published_record: PublishedSAEONRecordModel
-    ) -> str:
-        """Create a string from metadata field values to be indexed for full text search."""
+    ) -> tuple[str, str]:
+        """Create a title, free_text tuple from metadata field values to be indexed for full text search."""
         datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
-        values = []
+        title = ''
+        free_text = []
 
         for title in datacite_metadata.get('titles', ()):
             if title_text := title.get('title'):
-                values += [title_text]
+                title = title_text
 
         if publisher := datacite_metadata.get('publisher'):
-            values += [publisher]
+            free_text += [publisher]
 
         for creator in datacite_metadata.get('creators', ()):
             if creator_name := creator.get('name'):
-                values += [creator_name]
+                free_text += [creator_name]
             for affiliation in creator.get('affiliation', ()):
                 if affiliation_text := affiliation.get('affiliation'):
-                    values += [affiliation_text]
+                    free_text += [affiliation_text]
 
         for contributor in datacite_metadata.get('contributors', ()):
             if contributor_name := contributor.get('name'):
-                values += [contributor_name]
+                free_text += [contributor_name]
             for affiliation in contributor.get('affiliation', ()):
                 if affiliation_text := affiliation.get('affiliation'):
-                    values += [affiliation_text]
+                    free_text += [affiliation_text]
 
         for subject in datacite_metadata.get('subjects', ()):
             if subject_text := subject.get('subject'):
-                values += [subject_text]
+                free_text += [subject_text]
 
         for description in datacite_metadata.get('descriptions', ()):
             if description_text := description.get('description'):
-                values += [description_text]
+                free_text += [description_text]
 
-        return ' '.join(values)
+        return (
+            title,
+            ' '.join(free_text),
+        )
 
     def create_keyword_index_data(
             self, published_record: PublishedSAEONRecordModel

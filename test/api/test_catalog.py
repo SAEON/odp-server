@@ -1,6 +1,7 @@
 import os
 from copy import copy, deepcopy
 from datetime import datetime
+from itertools import product
 from random import randint
 
 import pytest
@@ -11,7 +12,7 @@ from odp.catalog.mims import MIMSCatalog
 from odp.catalog.saeon import SAEONCatalog
 from odp.const import ODPScope
 from odp.db.models import Catalog, Tag
-from test import TestSession, datacite4_example, isequal, iso19115_example, ris_example
+from test import TestSession, datacite4_example, isequal, iso19115_example, ris_example, ranked_metadata_example
 from test.api.assertions import assert_forbidden, assert_new_timestamp, assert_not_found, assert_redirect
 from test.factories import CatalogFactory, CollectionTagFactory, FactorySession, RecordFactory, RecordTagFactory
 
@@ -54,6 +55,61 @@ def static_publishing_data():
     migrate.systemdata.Session.commit()
 
 
+@pytest.mark.require_scope(ODPScope.CATALOG_SEARCH)
+def test_search_ranking(
+        api,
+        scopes,
+        static_publishing_data
+):
+    metadata_data = ranked_metadata_example()
+
+    title_variations = ['no_harmonic_distance', 'harmonic_distance', 'no_search_terms']
+    abstract_length_variations = ['short', 'long']
+    abstract_search_terms_variations = ['many_search_terms', 'few_search_terms']
+    abstract_harmonic_distance_variations = ['no_harmonic_distance', 'harmonic_distance']
+    keywords_variations = ['all_search_terms', 'no_search_terms']
+
+    metadata_permutations = product(
+        title_variations, abstract_length_variations, abstract_search_terms_variations,
+        abstract_harmonic_distance_variations, keywords_variations
+    )
+
+    for index, (title, abstract_length, abstract_search_terms, abstract_harmonic, keywords) in enumerate(
+            list(metadata_permutations)):
+        metadata_example = metadata_data["example"]
+        metadata_example["title"] = metadata_data['titles'][title]
+        metadata_example["abstract"] = metadata_data['abstracts'][
+            f'{abstract_length}-{abstract_search_terms}-{abstract_harmonic}']
+        metadata_example["descriptiveKeywords"] = metadata_data['keywords'][keywords]
+        metadata_example["doi"] = f'{index}/example_metadata_record'
+
+        create_example_record(
+            tag_collection_published=True,
+            tag_collection_infrastructure='SAEON',
+            tag_record_qc=True,
+            tag_record_retracted=None,
+            schema_id='SAEON.ISO19115',
+            metadata_=metadata_example
+        )
+
+    ranked_doi_order = metadata_data['generated_doi_ranked_order']
+
+    authorized = ODPScope.CATALOG_SEARCH in scopes
+    catalog_id = 'SAEON'
+
+    r = api(scopes).get(f'catalog/{catalog_id}/search', params=dict(
+        text_query='Lorem ipsum',
+        sort='rank desc',
+    ))
+
+    if authorized:
+        for index, item in enumerate(r.json()['items']):
+            current_doi_number = item['metadata_records'][0]['metadata']['doi'].split('/')[0]
+            assert int(current_doi_number) == int(ranked_doi_order[index])
+    else:
+        assert_forbidden(r)
+
+
 @pytest.fixture(params=['SAEON', 'MIMS'])
 def catalog_id(request):
     return request.param
@@ -70,6 +126,7 @@ def create_example_record(
         tag_record_qc,
         tag_record_retracted,
         schema_id=None,
+        metadata_=None,
 ):
     """Create and return a single record instance,
     with valid (example) metadata, optionally with collection and/or
@@ -77,6 +134,9 @@ def create_example_record(
     kwargs = dict(use_example_metadata=True)
     if schema_id:
         kwargs |= dict(schema_id=schema_id)
+
+    if metadata_:
+        kwargs |= dict(metadata_=metadata_)
 
     record = RecordFactory(**kwargs)
 
