@@ -122,7 +122,7 @@ packaging==25.0
     #   pytest
 pluggy==1.6.0
     # via pytest
-psycopg2==2.9.10
+psycopg2-binary==2.9.10
     # via -r requirements.in
 pycparser==2.22
     # via cffi
