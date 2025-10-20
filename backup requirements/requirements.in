@@ -1,15 +1,16 @@
 -e file:../odp-core
+-e file:../odp-ui
 
 sqlalchemy
-psycopg2
+psycopg2-binary
 alembic
 argon2-cffi
 pyyaml
 fastapi
 pydantic<2
 starlette
-jschon
-jschon-translation
+-e file:jschon
+-e file:jschon-translation
 redis
 authlib
 flask
@@ -19,6 +20,7 @@ email-validator
 werkzeug
 itsdangerous
 requests
+python-multipart
 
 # deployment
 uvicorn
