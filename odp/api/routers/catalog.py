@@ -15,6 +15,13 @@ from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import Json
 import requests
 
+# ReportLab imports for PDF generation
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.units import inch
+
 # from sqlalchemy.dialects.postgresql import jsonb_array_elements_text
 from sqlalchemy import func
 
@@ -597,20 +604,14 @@ async def create_download_bundle(
                         # Get record data
                         record_data = catalog_record.record.to_dict() if hasattr(catalog_record, 'record') else {}
 
-                    # Generate metadata PDF via odp-ui endpoint
+                    # Generate metadata PDF internally (server-side)
                     try:
-                        pdf_response = requests.post(
-                            'http://localhost:5000/catalog/format/metadata.pdf',
-                            json=[record_data],
-                            timeout=30
-                        )
-
-                        if pdf_response.status_code == 200:
-                            pdf_blob = pdf_response.content
-                            folder_name = record_title
-                            zip_file.writestr(f'{folder_name}/metadata.pdf', pdf_blob)
-                            total_size += len(pdf_blob)
-                            processed_records.append(doi)
+                        pdf_buffer = build_metadata_pdf(record_data)
+                        pdf_blob = pdf_buffer.getvalue()
+                        folder_name = record_title
+                        zip_file.writestr(f'{folder_name}/metadata.pdf', pdf_blob)
+                        total_size += len(pdf_blob)
+                        processed_records.append(doi)
                     except Exception as pdf_err:
                         print(f'Warning: Could not generate PDF for {doi}: {str(pdf_err)}')
                         continue
@@ -672,3 +673,180 @@ async def create_download_bundle(
     except Exception as e:
         print(f'Error creating download bundle: {str(e)}')
         raise HTTPException(500, f'Error creating bundle: {str(e)}')
+
+
+# ============================================================================
+# PDF Generation Utility
+# ============================================================================
+
+def build_metadata_pdf(record_data: dict) -> BytesIO:
+    """
+    Generate a metadata PDF for a single catalog record.
+    
+    Args:
+        record_data: Dictionary containing record metadata with structure:
+                    {
+                        "metadata_records": [{
+                            "metadata": {...datacite fields...}
+                        }],
+                        "keywords": [...],
+                        "temporal_start": "ISO timestamp",
+                        "temporal_end": "ISO timestamp"
+                    }
+    
+    Returns:
+        BytesIO buffer containing the PDF
+    """
+    try:
+        # Extract metadata
+        meta = record_data.get("metadata_records", [{}])[0].get("metadata", {})
+        
+        # Helper function to extract person details
+        def _get_person(person):
+            """Extract name, affiliation, email, and ORCID from person dict."""
+            name = person.get("name", "N/A")
+            affiliation = "N/A"
+            email = "N/A"
+            orcid = "N/A"
+
+            for aff in person.get("affiliation", []):
+                if "email:" in aff.get("affiliation", ""):
+                    affiliation, email = map(str.strip, aff["affiliation"].split(", email:"))
+                else:
+                    affiliation = aff.get("affiliation", "N/A")
+
+            for idf in person.get("nameIdentifiers", []):
+                if idf.get("nameIdentifierScheme") == "ORCID":
+                    orcid = idf.get("nameIdentifier", "N/A")
+
+            return name, affiliation, email, orcid
+
+        # Extract high-level fields
+        title = meta.get("titles", [{}])[0].get("title", "Untitled")
+        doi = meta.get("doi", "N/A")
+        publisher = meta.get("publisher", "N/A")
+        pub_year = meta.get("publicationYear", "N/A")
+        keywords = ", ".join(record_data.get("keywords", []))
+
+        abstract = meta.get("descriptions", [{}])[0].get("description", "N/A")
+        
+        # Format temporal extent
+        try:
+            t_start = datetime.fromisoformat(record_data.get("temporal_start", "")).strftime("%d %b %Y")
+            t_end = datetime.fromisoformat(record_data.get("temporal_end", "")).strftime("%d %b %Y")
+        except (ValueError, AttributeError):
+            t_start = record_data.get("temporal_start", "N/A")
+            t_end = record_data.get("temporal_end", "N/A")
+
+        # Geographic extent
+        try:
+            geo_box = meta.get("geoLocations", [{}])[0].get("geoLocationBox", {})
+            geo_str = (
+                f"North: {geo_box.get('northBoundLatitude', 'N/A')}\n"
+                f"South: {geo_box.get('southBoundLatitude', 'N/A')}\n"
+                f"West: {geo_box.get('westBoundLongitude', 'N/A')}\n"
+                f"East: {geo_box.get('eastBoundLongitude', 'N/A')}"
+            )
+        except (IndexError, KeyError):
+            geo_str = "N/A"
+
+        # Creator and contributor info
+        creator = meta.get("creators", [{}])[0]
+        contributor = meta.get("contributors", [{}])[0]
+        cr_name, cr_aff, cr_email, cr_orcid = _get_person(creator)
+        c_name, c_aff, c_email, c_orcid = _get_person(contributor)
+
+        # License info
+        try:
+            licence = meta.get("rightsList", [{}])[0]
+            licence_txt = f'<link href="{licence.get("rightsURI", "#")}">{licence.get("rights", "N/A")}</link>'
+        except (IndexError, KeyError):
+            licence_txt = "N/A"
+
+        # Setup styles
+        styles = getSampleStyleSheet()
+        label_style = ParagraphStyle(
+            "label",
+            parent=styles["BodyText"],
+            fontSize=10,
+            leading=13,
+            spaceAfter=0,
+            spaceBefore=2,
+            leftIndent=0,
+            rightIndent=6,
+            textColor=colors.black,
+            wordWrap="LTR",
+            bold=True,
+        )
+        value_style = ParagraphStyle(
+            "value",
+            parent=styles["BodyText"],
+            fontSize=10,
+            leading=13,
+            spaceAfter=0,
+            spaceBefore=2,
+        )
+        title_value_style = ParagraphStyle(
+            "title_value",
+            parent=value_style,
+            fontSize=11,
+            leading=14,
+            spaceBefore=0,
+            spaceAfter=2,
+            bold=True,
+        )
+
+        # Build table rows
+        rows = [
+            [Paragraph("Title", label_style), Paragraph(title, title_value_style)],
+            [Paragraph("DOI", label_style), Paragraph(f'<link href="https://doi.org/{doi}">https://doi.org/{doi}</link>', value_style)],
+            [Paragraph("Authors", label_style), Paragraph(f"{cr_name}<br/>{cr_aff}, email: {cr_email}", value_style)],
+            [Paragraph("Publisher", label_style), Paragraph(f"{publisher} ({pub_year})", value_style)],
+            [Paragraph("Contributors", label_style), Paragraph(f"Contact Person: {c_name}<br/>{c_aff},<br/>email: {c_email}", value_style)],
+            [Paragraph("Abstract", label_style), Paragraph(abstract, value_style)],
+            [Paragraph("Data", label_style), Paragraph(licence_txt, value_style)],
+            [Paragraph("Temporal extent", label_style), Paragraph(f"{t_start} – {t_end}", value_style)],
+            [Paragraph("Geographic extent", label_style), Paragraph(geo_str.replace("\n", "<br/>"), value_style)],
+            [Paragraph("Keywords", label_style), Paragraph(keywords, value_style)],
+        ]
+
+        # Create table
+        table = Table(
+            rows,
+            colWidths=[1.6 * inch, 5.3 * inch],
+            hAlign="LEFT",
+            repeatRows=0,
+        )
+
+        # Table styling
+        tbl_style = [
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.25, colors.lightgrey),
+        ]
+        for r in range(1, len(rows)):
+            tbl_style.append(("LINEBELOW", (0, r), (-1, r), 0.25, colors.lightgrey))
+
+        table.setStyle(TableStyle(tbl_style))
+
+        # Build PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=40,
+            leftMargin=40,
+            topMargin=40,
+            bottomMargin=40,
+        )
+
+        story = [table, Spacer(1, 0.2 * inch)]
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+
+    except Exception as e:
+        print(f"Error generating PDF: {str(e)}")
+        raise
+
