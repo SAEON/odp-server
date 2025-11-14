@@ -1,16 +1,19 @@
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from enum import Enum
 from functools import partial
+from io import BytesIO
 from math import ceil
 from typing import Any, Optional, List
 from uuid import UUID
+from zipfile import ZipFile, ZIP_DEFLATED
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import RedirectResponse, StreamingResponse
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import Json
+import requests
 
 # from sqlalchemy.dialects.postgresql import jsonb_array_elements_text
 from sqlalchemy import func
@@ -27,7 +30,7 @@ from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCit
                             SearchResult)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
-from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
+from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record, DownloadAudit
 from odp.lib.datacite import DataciteClient, DataciteError
 
 router = APIRouter()
@@ -508,3 +511,164 @@ async def records_subset(
         page=page,
         pages=ceil(total / limit) if limit else 0,
     )
+
+@router.post('/download/bundle')
+async def create_download_bundle(
+        request: Request,
+        catalog_id: str = Query(...),
+        record_dois: List[str] = Query(...),
+):
+    """
+    Create a ZIP bundle containing metadata PDFs for multiple records.
+
+    This endpoint:
+    1. Validates that all records exist in the catalog
+    2. Fetches metadata for each record
+    3. Generates metadata PDF for each record
+    4. Creates a ZIP archive containing everything
+    5. Streams the ZIP back to the client
+    6. Logs the download to the download_audit table
+
+    Query Parameters:
+    - catalog_id: The catalog identifier (e.g., 'mims')
+    - record_dois: List of DOI strings to bundle
+
+    Request Body (JSON):
+    {
+        "user_metadata": {
+            "name": "User Name",
+            "email": "user@example.com",
+            "organisation": "Organisation Name",
+            "reason": "Research purposes"
+        }
+    }
+
+    Returns:
+    - StreamingResponse with ZIP file
+    """
+    # Parse request body
+    try:
+        body = await request.json()
+        user_metadata = body.get('user_metadata', {})
+    except Exception as e:
+        raise HTTPException(400, f'Invalid JSON payload: {str(e)}')
+
+    # Validate inputs
+    if not record_dois:
+        raise HTTPException(400, 'record_dois parameter is required')
+    if not user_metadata.get('email'):
+        raise HTTPException(400, 'user_metadata.email is required')
+
+    # Maximum 2 GB per bundle
+    MAX_BUNDLE_SIZE = 2 * 1024 * 1024 * 1024
+
+    try:
+        # Validate that all records exist
+        with Session() as session:
+            for doi in record_dois:
+                record = session.query(CatalogRecord).filter(
+                    CatalogRecord.catalog_id == catalog_id,
+                    CatalogRecord.doi == doi
+                ).first()
+                if not record:
+                    raise HTTPException(404, f'Record {doi} not found')
+
+        # Create ZIP buffer
+        zip_buffer = BytesIO()
+        total_size = 0
+        processed_records = []
+
+        with ZipFile(zip_buffer, 'w', ZIP_DEFLATED) as zip_file:
+            for doi in record_dois:
+                try:
+                    # Fetch record metadata
+                    with Session() as session:
+                        catalog_record = session.query(CatalogRecord).filter(
+                            CatalogRecord.catalog_id == catalog_id,
+                            CatalogRecord.doi == doi
+                        ).first()
+
+                        if not catalog_record:
+                            continue
+
+                        # Safe folder name from DOI
+                        record_title = doi.replace('/', '_')[:50]
+
+                        # Get record data
+                        record_data = catalog_record.record.to_dict() if hasattr(catalog_record, 'record') else {}
+
+                    # Generate metadata PDF via odp-ui endpoint
+                    try:
+                        pdf_response = requests.post(
+                            'http://localhost:5000/catalog/format/metadata.pdf',
+                            json=[record_data],
+                            timeout=30
+                        )
+
+                        if pdf_response.status_code == 200:
+                            pdf_blob = pdf_response.content
+                            folder_name = record_title
+                            zip_file.writestr(f'{folder_name}/metadata.pdf', pdf_blob)
+                            total_size += len(pdf_blob)
+                            processed_records.append(doi)
+                    except Exception as pdf_err:
+                        print(f'Warning: Could not generate PDF for {doi}: {str(pdf_err)}')
+                        continue
+
+                    # Check size limit
+                    if total_size > MAX_BUNDLE_SIZE:
+                        raise HTTPException(413, 'Bundle exceeds maximum size of 2 GB')
+
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    print(f'Error processing record {doi}: {str(e)}')
+                    continue
+
+        # Get final ZIP size
+        zip_buffer.seek(0, 2)
+        final_size = zip_buffer.tell()
+        zip_buffer.seek(0)
+
+        # Log to download_audit
+        try:
+            with Session.begin():
+                audit = DownloadAudit(
+                    client_id='mims-client',
+                    user_id=None,
+                    download_url=f'/catalog/download/bundle?catalog_id={catalog_id}',
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get('user-agent'),
+                    file_size=final_size,
+                    success=True,
+                    timestamp=datetime.now(timezone.utc),
+                    meta={
+                        'name': user_metadata.get('name', 'N/A'),
+                        'email': user_metadata.get('email', 'N/A'),
+                        'organisation': user_metadata.get('organisation', 'N/A'),
+                        'download_type': 'zip_bundle',
+                        'record_count': len(processed_records),
+                        'dois': processed_records,
+                        'reason': user_metadata.get('reason', 'N/A'),
+                        'source': 'MIMS-UI-Bundle',
+                    }
+                )
+                Session.add(audit)
+        except Exception as audit_err:
+            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+
+        # Return as streaming response
+        return StreamingResponse(
+            iter([zip_buffer.getvalue()]),
+            media_type='application/zip',
+            headers={
+                'Content-Disposition': 'attachment; filename="records.zip"',
+                'Content-Length': str(final_size)
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'Error creating download bundle: {str(e)}')
+        raise HTTPException(500, f'Error creating bundle: {str(e)}')
