@@ -253,16 +253,74 @@ class MIMSCatalog(SAEONCatalog):
             'Project': [],
             'Location': [],
             'Instrument': [],
+            'EOV': [],
+            'EBV': [],
+            'SDG': [],
+            'Keyword': [],
         }
         iso19115_facets = {
             'theme': 'Project',
             'place': 'Location',
             'stratum': 'Instrument',
         }
+
+        # Process ISO19115 keywords if available
         if iso19115_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_ISO19115):
             for keyword_obj in iso19115_metadata.get('descriptiveKeywords', ()):
-                if (keyword_type := keyword_obj.get('keywordType')) in ('theme', 'place', 'stratum'):
-                    facets[iso19115_facets[keyword_type]] += [keyword_obj.get('keyword', '')]
+                keyword = keyword_obj.get('keyword', '')
+                keyword_type = keyword_obj.get('keywordType')
+
+                # Handle standard ISO19115 keyword types
+                if keyword_type in ('theme', 'place', 'stratum'):
+                    facets[iso19115_facets[keyword_type]] += [keyword]
+
+                # Parse EOV, EBV, SDG keywords or add as generic keyword
+                if keyword_type == 'general' or not keyword_type:
+                    if keyword.startswith('EOV:'):
+                        # Extract value after "EOV: " prefix
+                        eov_value = keyword[5:].strip() if len(keyword) > 5 else ''
+                        if eov_value:
+                            facets['EOV'].append(eov_value)
+                    elif keyword.startswith('EBV:'):
+                        # Extract value after "EBV: " prefix
+                        ebv_value = keyword[5:].strip() if len(keyword) > 5 else ''
+                        if ebv_value:
+                            facets['EBV'].append(ebv_value)
+                    elif keyword.startswith('SDG:'):
+                        # Extract value after "SDG: " prefix
+                        sdg_value = keyword[5:].strip() if len(keyword) > 5 else ''
+                        if sdg_value:
+                            facets['SDG'].append(sdg_value)
+                    else:
+                        # Add non-prefixed keywords to generic Keyword facet
+                        if keyword.strip():
+                            facets['Keyword'].append(keyword.strip())
+
+        # Also process DataCite subjects for EOV, EBV, SDG keywords
+        if datacite_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4):
+            for subject_obj in datacite_metadata.get('subjects', ()):
+                subject = subject_obj.get('subject', '')
+
+                # Parse EOV, EBV, SDG keywords from DataCite subjects or add as generic keyword
+                if subject.startswith('EOV:'):
+                    # Extract value after "EOV: " prefix
+                    eov_value = subject[5:].strip() if len(subject) > 5 else ''
+                    if eov_value:
+                        facets['EOV'].append(eov_value)
+                elif subject.startswith('EBV:'):
+                    # Extract value after "EBV: " prefix
+                    ebv_value = subject[5:].strip() if len(subject) > 5 else ''
+                    if ebv_value:
+                        facets['EBV'].append(ebv_value)
+                elif subject.startswith('SDG'):
+                    # For SDG, capture the full subject as the facet value
+                    # e.g., "SDG 14.1.1" or "SDG Goal 14"
+                    if subject.strip():
+                        facets['SDG'].append(subject.strip())
+                else:
+                    # Add non-prefixed subjects to generic Keyword facet
+                    if subject.strip():
+                        facets['Keyword'].append(subject.strip())
 
         return facets
 

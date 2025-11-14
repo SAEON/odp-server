@@ -183,24 +183,6 @@ async def search_records(
         if not isinstance(facet_query, dict):
             raise HTTPException(HTTP_422_UNPROCESSABLE_ENTITY, 'facet_query must be a JSON object')
 
-        ### NEW/MODIFIED BLOCK START ###
-        # Handle the special 'Keyword' facet filter by querying the JSONB column directly.
-        # We use .pop() to remove it from the dict so it's not processed by the generic loop below.
-        if keyword_filter := facet_query.pop('Keyword', None):
-            if not isinstance(keyword_filter, str):
-                raise HTTPException(HTTP_422_UNPROCESSABLE_ENTITY, 'Keyword facet value must be a string')
-
-            # This query checks if the 'keywords' array within the specified JSON path
-            # contains the provided keyword.
-            # NOTE: You MUST adjust the JSON path ['metadata_records'][1]['metadata']['keywords']
-            # to match the exact, reliable location of keywords in your 'published_record' JSON.
-            # The '@>' operator means 'contains'.
-            stmt = stmt.where(
-                CatalogRecord.published_record['metadata_records'][1]['metadata']['keywords'].op('@>')(
-                    [keyword_filter])
-            )
-        ### NEW/MODIFIED BLOCK END ###
-
         for facet_title, facet_value in facet_query.items():
             if not isinstance(facet_value, str):
                 raise HTTPException(HTTP_422_UNPROCESSABLE_ENTITY, 'facet value must be a string')
@@ -291,33 +273,6 @@ async def search_records(
     ):
         facets.setdefault(row.facet, [])
         facets[row.facet] += [(row.value, row.count)]
-
-    ### NEW/MODIFIED BLOCK START ###
-    # Now, run a SEPARATE query to calculate keyword facets from the JSONB data
-    # for all the records that matched our search.
-
-    # 1. Create a subquery from our main filtered statement
-    filtered_records_subquery = stmt.with_only_columns(CatalogRecord.published_record).subquery()
-
-    # 2. Build the keyword counting query
-    #    - It unnests the JSON array of keywords into separate text rows
-    #    - Then it groups by the keyword and counts occurrences
-    keyword_count_stmt = (
-        select(
-            func.jsonb_array_elements_text(
-                filtered_records_subquery.c.published_record['metadata_records'][1]['metadata']['keywords']
-            ).label('keyword'),
-            func.count().label('count')
-        )
-        .group_by('keyword')
-        .order_by('keyword')
-    )
-
-    # 3. Execute and add the results to our main facets dictionary
-    facets['Keyword'] = []
-    for row in Session.execute(keyword_count_stmt):
-        facets['Keyword'].append((row.keyword, row.count))
-    ### NEW/MODIFIED BLOCK END ###
 
     return SearchResult(
         facets=facets,
