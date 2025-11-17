@@ -561,12 +561,22 @@ async def create_download_bundle(
 
                     # Generate metadata PDF internally (server-side)
                     try:
+                        if not record_data:
+                            print(f'Warning: Empty record data for {doi}')
+                            continue
+
                         pdf_buffer = build_metadata_pdf(record_data)
                         pdf_blob = pdf_buffer.getvalue()
+
+                        if not pdf_blob:
+                            print(f'Warning: Generated empty PDF for {doi}')
+                            continue
+
                         folder_name = record_title
                         zip_file.writestr(f'{folder_name}/metadata.pdf', pdf_blob)
                         total_size += len(pdf_blob)
                         processed_records.append(doi)
+                        print(f'Debug: Added {doi} to ZIP ({len(pdf_blob)} bytes)')
                     except Exception as pdf_err:
                         print(f'Warning: Could not generate PDF for {doi}: {str(pdf_err)}')
                         continue
@@ -583,11 +593,16 @@ async def create_download_bundle(
 
         # ZipFile context is closed, get final ZIP size
         # The buffer now contains the complete ZIP file
-        final_size = len(zip_buffer.getvalue())
+        zip_contents = zip_buffer.getvalue()
+        final_size = len(zip_contents)
         zip_buffer.seek(0)
 
         # Log to download_audit
         try:
+            # Ensure we have a valid file size before logging
+            if final_size <= 0:
+                print(f'Warning: ZIP buffer is empty (size: {final_size}), processed {len(processed_records)} records')
+
             with Session.begin():
                 audit = DownloadAudit(
                     client_id='mims-client',
@@ -595,7 +610,7 @@ async def create_download_bundle(
                     download_url=f'/catalog/download/bundle?catalog_id={catalog_id}',
                     ip_address=request.client.host if request.client else None,
                     user_agent=request.headers.get('user-agent'),
-                    file_size=final_size,
+                    file_size=final_size if final_size > 0 else None,
                     success=True,
                     timestamp=datetime.now(timezone.utc),
                     meta={
@@ -607,6 +622,7 @@ async def create_download_bundle(
                         'dois': processed_records,
                         'reason': user_metadata.get('reason', 'N/A'),
                         'source': 'MIMS-UI-Bundle',
+                        'bundle_size_bytes': final_size,
                     }
                 )
                 Session.add(audit)
