@@ -581,9 +581,9 @@ async def create_download_bundle(
                     print(f'Error processing record {doi}: {str(e)}')
                     continue
 
-        # Get final ZIP size
-        zip_buffer.seek(0, 2)
-        final_size = zip_buffer.tell()
+        # ZipFile context is closed, get final ZIP size
+        # The buffer now contains the complete ZIP file
+        final_size = len(zip_buffer.getvalue())
         zip_buffer.seek(0)
 
         # Log to download_audit
