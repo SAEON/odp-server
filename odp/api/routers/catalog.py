@@ -539,6 +539,7 @@ async def create_download_bundle(
         zip_buffer = BytesIO()
         total_size = 0
         processed_records = []
+        files_added = []  # Track files added to ZIP
 
         with ZipFile(zip_buffer, 'w', ZIP_DEFLATED) as zip_file:
             for doi in record_dois:
@@ -573,10 +574,22 @@ async def create_download_bundle(
                             continue
 
                         folder_name = record_title
-                        zip_file.writestr(f'{folder_name}/metadata.pdf', pdf_blob)
-                        total_size += len(pdf_blob)
+                        pdf_filename = f'{folder_name}/metadata.pdf'
+                        pdf_size = len(pdf_blob)
+
+                        zip_file.writestr(pdf_filename, pdf_blob)
+                        total_size += pdf_size
                         processed_records.append(doi)
-                        print(f'Debug: Added {doi} to ZIP ({len(pdf_blob)} bytes)')
+
+                        # Track file information
+                        files_added.append({
+                            'name': pdf_filename,
+                            'size': pdf_size,
+                            'doi': doi,
+                            'type': 'metadata_pdf'
+                        })
+
+                        print(f'Debug: Added {doi} to ZIP ({pdf_size} bytes)')
                     except Exception as pdf_err:
                         print(f'Warning: Could not generate PDF for {doi}: {str(pdf_err)}')
                         continue
@@ -623,6 +636,9 @@ async def create_download_bundle(
                         'reason': user_metadata.get('reason', 'N/A'),
                         'source': 'MIMS-UI-Bundle',
                         'bundle_size_bytes': final_size,
+                        'files_in_bundle': files_added,
+                        'total_files': len(files_added),
+                        'zip_file_size': final_size,
                     }
                 )
                 Session.add(audit)
