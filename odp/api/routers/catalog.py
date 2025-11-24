@@ -616,7 +616,7 @@ async def create_download_bundle(
             if final_size <= 0:
                 print(f'Warning: ZIP buffer is empty (size: {final_size}), processed {len(processed_records)} records')
 
-            with Session.begin():
+            with Session.begin() as session:
                 audit = DownloadAudit(
                     client_id='mims-client',
                     user_id=None,
@@ -641,7 +641,7 @@ async def create_download_bundle(
                         'zip_file_size': final_size,
                     }
                 )
-                Session.add(audit)
+                session.add(audit)
         except Exception as audit_err:
             print(f'Warning: Could not log to download_audit: {str(audit_err)}')
 
