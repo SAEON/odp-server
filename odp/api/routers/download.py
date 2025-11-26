@@ -34,7 +34,7 @@ async def create_download_audit(request: Request):
     meta = payload.get('meta', {}) or {}
 
     # copy optional form fields into meta for storage
-    for k in ('name', 'email', 'organisation'):
+    for k in ('name', 'email', 'organisation', 'doi', 'record_id'):
         if payload.get(k) is not None:
             meta[k] = payload.get(k)
 
