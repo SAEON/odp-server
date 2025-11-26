@@ -144,6 +144,7 @@ async def get_download_logs(
                 'file_size': d.file_size,
                 'success': d.success,
                 'ip_address': d.ip_address,
+                'meta': d.meta or {},
             })
 
         return {
