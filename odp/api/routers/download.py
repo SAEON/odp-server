@@ -43,7 +43,7 @@ async def create_download_audit(request: Request):
     user_agent = request.headers.get('user-agent')
 
     # persist using Session
-    with Session.begin() as session:
+    with Session() as session:
         audit = DownloadAudit(
             client_id=client_id,
             user_id=user_id,
@@ -56,7 +56,7 @@ async def create_download_audit(request: Request):
             meta=meta,
         )
         session.add(audit)
-        session.flush()
+        session.commit()
         audit_id = audit.id
 
     return {"status": "ok", "audit_id": audit_id}
