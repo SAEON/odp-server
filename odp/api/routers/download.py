@@ -18,6 +18,19 @@ router = APIRouter()
 async def create_download_audit(request: Request):
     """
     Accept JSON payload to record a download audit and return success.
+
+    Expected payload fields:
+    - download_url (required): URL of the downloaded file
+    - name (optional): User's name
+    - email (optional): User's email address
+    - organisation (optional): User's organisation
+    - doi (optional): DOI of the record being downloaded
+    - record_id (optional): Record ID of the record being downloaded
+    - file_size (optional): Size of the downloaded file in bytes
+    - success (optional): Whether download was successful (default: true)
+    - client_id (optional): Client identifier (derived from request if not provided)
+    - user_id (optional): User identifier (derived from request if not provided)
+    - meta (optional): Additional metadata object to store
     """
     payload = await request.json()
     if not isinstance(payload, dict):
