@@ -43,12 +43,7 @@ async def create_download_audit(request: Request):
     user_agent = request.headers.get('user-agent')
 
     # persist using Session
-    #
-    # --- THIS IS THE FIX ---
-    # We use `Session.begin()` to manage the transaction,
-    # and call methods on the imported `Session` object itself.
-    #
-    with Session.begin():
+    with Session.begin() as session:
         audit = DownloadAudit(
             client_id=client_id,
             user_id=user_id,
@@ -60,10 +55,9 @@ async def create_download_audit(request: Request):
             timestamp=datetime.now(timezone.utc),
             meta=meta,
         )
-        Session.add(audit)
-        Session.flush()
+        session.add(audit)
+        session.flush()
         audit_id = audit.id
-    # --- END OF FIX ---
 
     return {"status": "ok", "audit_id": audit_id}
 
