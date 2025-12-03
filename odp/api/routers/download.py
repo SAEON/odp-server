@@ -230,6 +230,50 @@ async def get_download_statistics(
 
         downloads_by_type = downloads_by_type.group_by('type').all()
 
+        # Downloads by organisation (top 20)
+        organisations = session.query(
+            DownloadAudit.meta['organisation'].astext.label('organisation'),
+            func.count(DownloadAudit.id).label('downloads'),
+            func.count(func.distinct(DownloadAudit.meta['email'])).label('unique_users')
+        ).filter(DownloadAudit.meta['organisation'].isnot(None))
+
+        if start_date:
+            organisations = organisations.filter(DownloadAudit.timestamp >= datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc))
+        if end_date:
+            organisations = organisations.filter(DownloadAudit.timestamp <= datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).replace(hour=23, minute=59, second=59))
+
+        organisations = organisations.group_by('organisation').order_by(func.count(DownloadAudit.id).desc()).limit(20).all()
+
+        # Top 10 most downloaded records (by DOI)
+        top_records = session.query(
+            DownloadAudit.meta['doi'].astext.label('doi'),
+            DownloadAudit.meta['record_id'].astext.label('record_id'),
+            func.count(DownloadAudit.id).label('downloads'),
+            func.count(func.distinct(DownloadAudit.meta['email'])).label('unique_users')
+        ).filter(DownloadAudit.meta['doi'].isnot(None))
+
+        if start_date:
+            top_records = top_records.filter(DownloadAudit.timestamp >= datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc))
+        if end_date:
+            top_records = top_records.filter(DownloadAudit.timestamp <= datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).replace(hour=23, minute=59, second=59))
+
+        top_records = top_records.group_by('doi', 'record_id').order_by(func.count(DownloadAudit.id).desc()).limit(10).all()
+
+        # Daily downloads time-series
+        daily_downloads = session.query(
+            func.date(DownloadAudit.timestamp).label('date'),
+            func.count(DownloadAudit.id).label('downloads'),
+            func.count(func.filter(DownloadAudit.success == True, DownloadAudit.id)).label('successful'),
+            func.count(func.filter(DownloadAudit.success == False, DownloadAudit.id)).label('failed')
+        )
+
+        if start_date:
+            daily_downloads = daily_downloads.filter(DownloadAudit.timestamp >= datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc))
+        if end_date:
+            daily_downloads = daily_downloads.filter(DownloadAudit.timestamp <= datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc).replace(hour=23, minute=59, second=59))
+
+        daily_downloads = daily_downloads.group_by(func.date(DownloadAudit.timestamp)).order_by(func.date(DownloadAudit.timestamp)).all()
+
         return {
             'total_downloads': total_downloads,
             'unique_users': unique_users_count,
@@ -239,6 +283,32 @@ async def get_download_statistics(
             'downloads_by_type': {
                 item[0]: item[1] for item in downloads_by_type
             },
+            'organisations': [
+                {
+                    'name': item[0] or 'Unknown',
+                    'downloads': item[1],
+                    'unique_users': item[2]
+                }
+                for item in organisations
+            ],
+            'top_records': [
+                {
+                    'doi': item[0],
+                    'record_id': item[1],
+                    'downloads': item[2],
+                    'unique_users': item[3]
+                }
+                for item in top_records
+            ],
+            'daily_downloads': [
+                {
+                    'date': item[0].isoformat() if item[0] else None,
+                    'downloads': item[1],
+                    'successful': item[2],
+                    'failed': item[3]
+                }
+                for item in daily_downloads
+            ],
         }
 
 
