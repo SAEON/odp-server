@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST
-from sqlalchemy import insert, desc, func
+from sqlalchemy import insert, desc, func, case
 
 from odp.db import Session
 from odp.db.models import DownloadAudit
@@ -263,8 +263,8 @@ async def get_download_statistics(
         daily_downloads = session.query(
             func.date(DownloadAudit.timestamp).label('date'),
             func.count(DownloadAudit.id).label('downloads'),
-            func.count(func.filter(DownloadAudit.success == True, DownloadAudit.id)).label('successful'),
-            func.count(func.filter(DownloadAudit.success == False, DownloadAudit.id)).label('failed')
+            func.sum(case((DownloadAudit.success == True, 1), else_=0)).label('successful'),
+            func.sum(case((DownloadAudit.success == False, 1), else_=0)).label('failed')
         )
 
         if start_date:
