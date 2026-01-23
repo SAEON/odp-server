@@ -15,14 +15,12 @@ from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import Json
 import requests
 
-# ReportLab imports for PDF generation
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.units import inch
 
-# from sqlalchemy.dialects.postgresql import jsonb_array_elements_text
 from sqlalchemy import func
 
 from sqlalchemy import and_, func, or_, select, text
@@ -837,4 +835,3 @@ def build_metadata_pdf(record_data: dict) -> BytesIO:
     except Exception as e:
         print(f"Error generating PDF: {str(e)}")
         raise
-
