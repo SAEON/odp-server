@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from io import StringIO
 import csv
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -381,7 +382,25 @@ async def export_downloads_csv(
         ])
 
         # Write data rows
+        # Get MIMS_CATALOG_URL from environment
+        mims_url = os.getenv('MIMS_CATALOG_URL', 'http://mims.localhost:2023/catalog')
+
         for d in downloads:
+            # Build the view record/bundle link
+            view_link = ''
+            download_type = d.meta.get('download_type') if d.meta else ''
+
+            if download_type == 'single_record':
+                doi = d.meta.get('doi') if d.meta else ''
+                if doi:
+                    view_link = f"{mims_url}/{doi}"
+            elif download_type == 'zip_bundle':
+                dois = d.meta.get('dois') if d.meta else []
+                if dois and isinstance(dois, list) and len(dois) > 0:
+                    query_parts = [f'record_id_or_doi_list={doi}' for doi in dois]
+                    query_string = '&'.join(query_parts)
+                    view_link = f"{mims_url}/subset?{query_string}&page=1&size=50"
+
             writer.writerow([
                 d.id,
                 d.timestamp.isoformat(),
@@ -392,7 +411,7 @@ async def export_downloads_csv(
                 d.file_size or '',
                 'Yes' if d.success else 'No',
                 d.ip_address or '',
-                d.download_url or '',
+                view_link,
             ])
 
         # Generate filename with date range
