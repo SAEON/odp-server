@@ -52,6 +52,12 @@ class DataCiteCatalog(Catalog):
             result = iso19115_schema.evaluate(JSON(record_model.metadata))
             datacite_metadata = result.output('translation', scheme='saeon/datacite4', ignore_validity=True)
 
+        elif record_model.schema_id == ODPMetadataSchema.SAEON_EML:
+            schema = Session.get(Schema, (record_model.schema_id, SchemaType.metadata))
+            eml_schema = schema_catalog.get_schema(URI(schema.uri))
+            result = eml_schema.evaluate(JSON(record_model.metadata))
+            datacite_metadata = result.output('translation', scheme='saeon/datacite4', ignore_validity=True)
+
         else:
             raise NotImplementedError
 
