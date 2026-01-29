@@ -48,9 +48,11 @@ class MIMSCatalog(SAEONCatalog):
                 cannot_publish_reasons = []
                 self.evaluate_record(child_record_model, can_publish_reasons, cannot_publish_reasons)
                 is_child_published = not cannot_publish_reasons
+                print("Is a child record")
             else:
                 catalog_record = Session.get(CatalogRecord, (self.catalog_id, child_id))
                 is_child_published = catalog_record.published
+                print("Is NOT a child record")
 
             if is_child_published:
                 for metadata_record in published_record.metadata_records:
@@ -72,6 +74,7 @@ class MIMSCatalog(SAEONCatalog):
                 metadata=self._create_jsonld_metadata(published_record, mims_catalog)
             )
         ]
+        print("jsonLD part done")
 
         # add an RIS citation record
         ris_schema = Session.get(Schema, (ODPMetadataSchema.RIS_CITATION, SchemaType.metadata))
@@ -82,7 +85,7 @@ class MIMSCatalog(SAEONCatalog):
                 metadata=self._create_ris_metadata(published_record, mims_catalog)
             )
         ]
-
+        print("RIS record part done")
         return published_record
 
     def _create_jsonld_metadata(
