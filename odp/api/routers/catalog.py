@@ -564,7 +564,6 @@ async def create_download_bundle(
                         from odp.lib.metadata_pdf import generate_pdf
 
                         if not record_data:
-                            print(f'Warning: Empty record data for {doi}')
                             continue
 
                         # Extract metadata and adapt to unified format
@@ -581,13 +580,11 @@ async def create_download_bundle(
                             pdf_buffer = generate_pdf(record_metadata)
                         except (ValueError, KeyError) as adapt_err:
                             # Fallback to legacy function for backward compatibility
-                            print(f'Info: Falling back to legacy PDF generation for {doi}: {str(adapt_err)}')
                             pdf_buffer = build_metadata_pdf(record_data)
 
                         pdf_blob = pdf_buffer.getvalue()
 
                         if not pdf_blob:
-                            print(f'Warning: Generated empty PDF for {doi}')
                             continue
 
                         folder_name = record_title
@@ -606,9 +603,7 @@ async def create_download_bundle(
                             'type': 'metadata_pdf'
                         })
 
-                        print(f'Debug: Added {doi} to ZIP ({pdf_size} bytes)')
                     except Exception as pdf_err:
-                        print(f'Warning: Could not generate PDF for {doi}: {str(pdf_err)}')
                         continue
 
                     # Check size limit
@@ -618,7 +613,6 @@ async def create_download_bundle(
                 except HTTPException:
                     raise
                 except Exception as e:
-                    print(f'Error processing record {doi}: {str(e)}')
                     continue
 
         # ZipFile context is closed, get final ZIP size
@@ -629,9 +623,6 @@ async def create_download_bundle(
 
         # Log to download_audit
         try:
-            # Ensure we have a valid file size before logging
-            if final_size <= 0:
-                print(f'Warning: ZIP buffer is empty (size: {final_size}), processed {len(processed_records)} records')
 
             with Session() as session:
                 audit = DownloadAudit(
@@ -661,7 +652,7 @@ async def create_download_bundle(
                 session.add(audit)
                 session.commit()
         except Exception as audit_err:
-            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+            pass
 
         # Return as streaming response
         return StreamingResponse(
@@ -676,7 +667,6 @@ async def create_download_bundle(
     except HTTPException:
         raise
     except Exception as e:
-        print(f'Error creating download bundle: {str(e)}')
         raise HTTPException(500, f'Error creating bundle: {str(e)}')
 
 
@@ -763,7 +753,6 @@ async def generate_metadata_pdf(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print(f'Error generating PDF: {str(e)}')
         raise HTTPException(500, f'Internal server error: {str(e)}')
 
 
@@ -834,7 +823,6 @@ async def generate_record_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        print(f'Error generating record PDF: {str(e)}')
         raise HTTPException(500, f'Internal server error: {str(e)}')
 
 
@@ -1010,5 +998,4 @@ def build_metadata_pdf(record_data: dict) -> BytesIO:
         return buffer
 
     except Exception as e:
-        print(f"Error generating PDF: {str(e)}")
         raise
