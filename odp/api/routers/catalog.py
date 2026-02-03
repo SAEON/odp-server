@@ -558,13 +558,32 @@ async def create_download_bundle(
                         # Get record data
                         record_data = catalog_record.record.to_dict() if hasattr(catalog_record, 'record') else {}
 
-                    # Generate metadata PDF internally (server-side)
+                    # Generate metadata PDF using unified module
                     try:
+                        from odp.lib.metadata_adapters import adapt_metadata
+                        from odp.lib.metadata_pdf import generate_pdf
+
                         if not record_data:
                             print(f'Warning: Empty record data for {doi}')
                             continue
 
-                        pdf_buffer = build_metadata_pdf(record_data)
+                        # Extract metadata and adapt to unified format
+                        metadata = record_data.get('metadata', {})
+                        keywords = record_data.get('keywords', [])
+
+                        try:
+                            # Adapt to unified RecordMetadata format
+                            record_metadata = adapt_metadata(metadata)
+                            if keywords:
+                                record_metadata.keywords = keywords
+
+                            # Generate PDF from unified format
+                            pdf_buffer = generate_pdf(record_metadata)
+                        except (ValueError, KeyError) as adapt_err:
+                            # Fallback to legacy function for backward compatibility
+                            print(f'Info: Falling back to legacy PDF generation for {doi}: {str(adapt_err)}')
+                            pdf_buffer = build_metadata_pdf(record_data)
+
                         pdf_blob = pdf_buffer.getvalue()
 
                         if not pdf_blob:
@@ -662,7 +681,205 @@ async def create_download_bundle(
 
 
 # ============================================================================
-# PDF Generation Utility
+# PDF Generation API Endpoints (Unified Module)
+# ============================================================================
+
+@router.post(
+    '/metadata/generate-pdf',
+    response_class=StreamingResponse,
+    summary='Generate PDF from metadata',
+    description='Generate a PDF from metadata in DataCite4 or ISO19115 format',
+    include_in_schema=True,
+)
+async def generate_metadata_pdf(request: Request):
+    """
+    Generate PDF from raw metadata.
+
+    Accepts metadata in either DataCite4 or ISO19115 format.
+    Automatically detects format or uses specified schema_id.
+
+    Request body:
+    {
+        "metadata_format": "auto|datacite4|iso19115",
+        "metadata": {...},
+        "keywords": [...],
+        "temporal_start": "ISO 8601 date",
+        "temporal_end": "ISO 8601 date"
+    }
+    """
+    try:
+        from odp.lib.metadata_adapters import adapt_metadata
+        from odp.lib.metadata_pdf import generate_pdf
+
+        body = await request.json()
+
+        # Get parameters
+        metadata = body.get('metadata')
+        metadata_format = body.get('metadata_format', 'auto')
+        keywords = body.get('keywords', [])
+        temporal_start = body.get('temporal_start')
+        temporal_end = body.get('temporal_end')
+
+        if not metadata:
+            raise HTTPException(400, 'metadata field is required')
+
+        # Adapt metadata to unified format
+        try:
+            record_metadata = adapt_metadata(metadata, schema_id=metadata_format)
+        except ValueError as e:
+            raise HTTPException(422, f'Could not process metadata: {str(e)}')
+
+        # Override with request parameters if provided
+        if keywords:
+            record_metadata.keywords = keywords
+        if temporal_start:
+            from odp.lib.metadata_pdf import TemporalExtent
+            if temporal_end:
+                record_metadata.temporal = TemporalExtent(
+                    start_date=temporal_start,
+                    end_date=temporal_end
+                )
+
+        # Generate PDF
+        try:
+            pdf_buffer = generate_pdf(record_metadata)
+            pdf_content = pdf_buffer.getvalue()
+        except ValueError as e:
+            raise HTTPException(500, f'PDF generation failed: {str(e)}')
+
+        # Log download audit
+        try:
+            with Session() as session:
+                audit = DownloadAudit(
+                    client_id='odp-api',
+                    user_id=None,
+                    download_url='/catalog/metadata/generate-pdf',
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get('user-agent'),
+                    file_size=len(pdf_content),
+                    success=True,
+                    timestamp=datetime.now(timezone.utc),
+                    meta={
+                        'format': metadata_format,
+                        'source': 'API-PDF-GENERATION',
+                        'endpoint': '/catalog/metadata/generate-pdf',
+                    }
+                )
+                session.add(audit)
+                session.commit()
+        except Exception as audit_err:
+            # Log but don't fail the request
+            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+
+        return StreamingResponse(
+            iter([pdf_content]),
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': 'attachment; filename="metadata.pdf"',
+                'Content-Length': str(len(pdf_content))
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'Error generating PDF: {str(e)}')
+        raise HTTPException(500, f'Internal server error: {str(e)}')
+
+
+@router.post(
+    '/{catalog_id}/records/{record_id}/metadata.pdf',
+    response_class=StreamingResponse,
+    summary='Generate PDF for specific record',
+    description='Generate PDF for a catalog record by ID',
+)
+async def generate_record_pdf(
+    catalog_id: str,
+    record_id: UUID,
+    request: Request,
+):
+    """
+    Generate PDF for a specific catalog record.
+
+    Retrieves record metadata and generates PDF directly.
+    """
+    try:
+        from odp.lib.metadata_adapters import adapt_metadata
+        from odp.lib.metadata_pdf import generate_pdf
+
+        # Fetch record from database
+        stmt = select(CatalogRecord).where(
+            and_(
+                CatalogRecord.catalog_id == catalog_id,
+                CatalogRecord.record_id == record_id,
+                CatalogRecord.published == True
+            )
+        )
+
+        if not (catalog_record := Session.execute(stmt).scalar_one_or_none()):
+            raise HTTPException(404, 'Record not found')
+
+        # Extract metadata
+        metadata = catalog_record.record.data.get('metadata', {})
+        keywords = catalog_record.record.data.get('keywords', [])
+
+        # Adapt to unified format
+        try:
+            record_metadata = adapt_metadata(metadata)
+            if keywords:
+                record_metadata.keywords = keywords
+        except ValueError as e:
+            raise HTTPException(422, f'Could not process metadata: {str(e)}')
+
+        # Generate PDF
+        try:
+            pdf_buffer = generate_pdf(record_metadata)
+            pdf_content = pdf_buffer.getvalue()
+        except ValueError as e:
+            raise HTTPException(500, f'PDF generation failed: {str(e)}')
+
+        # Log download audit
+        try:
+            with Session() as session:
+                audit = DownloadAudit(
+                    client_id='odp-api',
+                    user_id=None,
+                    download_url=f'/catalog/{catalog_id}/records/{record_id}/metadata.pdf',
+                    ip_address=request.client.host if request.client else None,
+                    user_agent=request.headers.get('user-agent'),
+                    file_size=len(pdf_content),
+                    success=True,
+                    timestamp=datetime.now(timezone.utc),
+                    meta={
+                        'catalog_id': catalog_id,
+                        'record_id': str(record_id),
+                        'source': 'API-PDF-RECORD',
+                        'endpoint': f'/catalog/{catalog_id}/records/{record_id}/metadata.pdf',
+                    }
+                )
+                session.add(audit)
+                session.commit()
+        except Exception as audit_err:
+            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+
+        return StreamingResponse(
+            iter([pdf_content]),
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="record_{record_id}.pdf"',
+                'Content-Length': str(len(pdf_content))
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'Error generating record PDF: {str(e)}')
+        raise HTTPException(500, f'Internal server error: {str(e)}')
+
+
+# ============================================================================
+# PDF Generation Utility (Legacy - Kept for backward compatibility)
 # ============================================================================
 
 def build_metadata_pdf(record_data: dict) -> BytesIO:
