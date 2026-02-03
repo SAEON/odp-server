@@ -747,29 +747,9 @@ async def generate_metadata_pdf(request: Request):
         except ValueError as e:
             raise HTTPException(500, f'PDF generation failed: {str(e)}')
 
-        # Log download audit
-        try:
-            with Session() as session:
-                audit = DownloadAudit(
-                    client_id='odp-api',
-                    user_id=None,
-                    download_url='/catalog/metadata/generate-pdf',
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get('user-agent'),
-                    file_size=len(pdf_content),
-                    success=True,
-                    timestamp=datetime.now(timezone.utc),
-                    meta={
-                        'format': metadata_format,
-                        'source': 'API-PDF-GENERATION',
-                        'endpoint': '/catalog/metadata/generate-pdf',
-                    }
-                )
-                session.add(audit)
-                session.commit()
-        except Exception as audit_err:
-            # Log but don't fail the request
-            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+        # Note: PDF generation is typically called internally by other endpoints
+        # (e.g., MIMS downloads or ZIP bundle generation) which handle their own
+        # audit logging. We don't log here to avoid duplicate audit entries.
 
         return StreamingResponse(
             iter([pdf_content]),
@@ -838,29 +818,9 @@ async def generate_record_pdf(
         except ValueError as e:
             raise HTTPException(500, f'PDF generation failed: {str(e)}')
 
-        # Log download audit
-        try:
-            with Session() as session:
-                audit = DownloadAudit(
-                    client_id='odp-api',
-                    user_id=None,
-                    download_url=f'/catalog/{catalog_id}/records/{record_id}/metadata.pdf',
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get('user-agent'),
-                    file_size=len(pdf_content),
-                    success=True,
-                    timestamp=datetime.now(timezone.utc),
-                    meta={
-                        'catalog_id': catalog_id,
-                        'record_id': str(record_id),
-                        'source': 'API-PDF-RECORD',
-                        'endpoint': f'/catalog/{catalog_id}/records/{record_id}/metadata.pdf',
-                    }
-                )
-                session.add(audit)
-                session.commit()
-        except Exception as audit_err:
-            print(f'Warning: Could not log to download_audit: {str(audit_err)}')
+        # Note: PDF generation is typically called internally by other endpoints
+        # which handle their own audit logging. We don't log here to avoid
+        # duplicate or incomplete audit entries.
 
         return StreamingResponse(
             iter([pdf_content]),
