@@ -55,6 +55,7 @@ def delete_folder_from_nextcloud(folder_name):
 def _clear_and_create_folder(folder_name):
     """Deletes the folder and then re-creates it."""
     folder_url = f"{config.NEXTCLOUD.URL}{NEXTCLOUD_FOLDER}{folder_name}/"
+    auth = (config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD)
 
     delete_folder_from_nextcloud(folder_name)
 
