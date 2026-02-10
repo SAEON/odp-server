@@ -1,28 +1,17 @@
+import logging
 import re
-from datetime import date, datetime, timezone
+from datetime import date
 from enum import Enum
 from functools import partial
-from io import BytesIO
 from math import ceil
 from typing import Any, Optional, List
 from uuid import UUID
-from zipfile import ZipFile, ZIP_DEFLATED
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
-from pydantic import Json
-import requests
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.units import inch
-
-from sqlalchemy import func
-
+from pydantic import BaseModel, Field, Json
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import aliased, load_only
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_422_UNPROCESSABLE_ENTITY
@@ -31,19 +20,37 @@ from odp.api.lib.auth import Authorize
 from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
-from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCiteRecordModel, PublishedSAEONRecordModel, RetractedRecordModel,
+from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCiteRecordModel, PublishedSAEONRecordModel,
+                            RetractedRecordModel,
                             SearchResult)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
-from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record, DownloadAudit
+from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
 from odp.lib.datacite import DataciteClient, DataciteError
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SearchResultSort(str, Enum):
     TIMESTAMP_DESC = 'timestamp desc'
     RANK_DESC = 'rank desc'
+
+
+class UserData(BaseModel):
+    """User information for audit logging."""
+    name: str = Field(..., description="Full name of the user", min_length=1)
+    email: str = Field(..., description="Email address of the user", min_length=1)
+    organisation: str = Field(..., description="Organization or institution name", min_length=1)
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "name": "John Smith",
+                "email": "john@example.com",
+                "organisation": "University"
+            }
+        }
 
 
 @router.get(
@@ -255,19 +262,19 @@ async def search_records(
     facets = {}
     facet_subquery = select(CatalogRecordFacet).subquery()
     for row in Session.execute(
-        select(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-            func.count(),
-        )
-        .join_from(
-            stmt.subquery(),
-            facet_subquery,
-        )
-        .group_by(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-        )
+            select(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+                func.count(),
+            )
+                    .join_from(
+                stmt.subquery(),
+                facet_subquery,
+            )
+                    .group_by(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+            )
     ):
         facets.setdefault(row.facet, [])
         facets[row.facet] += [(row.value, row.count)]
@@ -412,7 +419,6 @@ async def records_subset(
         page: int = 1,
         size: int = 50
 ):
-
     if not Session.get(Catalog, catalog_id):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -424,13 +430,10 @@ async def records_subset(
         .where(CatalogRecord.searchable)
     )
 
-
-
     total = Session.execute(
         select(func.count())
         .select_from(stmt.subquery())
     ).scalar_one()
-
 
     order_by = CatalogRecord.timestamp.desc()
 
@@ -447,19 +450,19 @@ async def records_subset(
     facets = {}
     facet_subquery = select(CatalogRecordFacet).subquery()
     for row in Session.execute(
-        select(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-            func.count(),
-        )
-        .join_from(
-            stmt.subquery(),
-            facet_subquery,
-        )
-        .group_by(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-        )
+            select(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+                func.count(),
+            )
+                    .join_from(
+                stmt.subquery(),
+                facet_subquery,
+            )
+                    .group_by(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+            )
     ):
         facets.setdefault(row.facet, [])
         facets[row.facet] += [(row.value, row.count)]
@@ -472,530 +475,75 @@ async def records_subset(
         pages=ceil(total / limit) if limit else 0,
     )
 
-@router.post('/download/bundle')
-async def create_download_bundle(
-        request: Request,
-        catalog_id: str = Query(...),
-        record_dois: List[str] = Query(...),
+
+@router.post(
+    '/generate-zip-bundle',
+    response_class=StreamingResponse,
+    summary='Generate server-side ZIP bundle',
+    description='Generate a server-side ZIP file containing metadata PDFs and data files for selected records',
+    status_code=200,
+    dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
+)
+def generate_zip_bundle(
+        record_ids: list[str],
+        user_data: UserData,
+        request: Request
 ):
     """
-    Create a ZIP bundle containing metadata PDFs for multiple records.
+    Generate ZIP bundle with metadata PDFs and data files.
 
-    This endpoint:
-    1. Validates that all records exist in the catalog
-    2. Fetches metadata for each record
-    3. Generates metadata PDF for each record
-    4. Creates a ZIP archive containing everything
-    5. Streams the ZIP back to the client
-    6. Logs the download to the download_audit table
+    Explicit parameters:
+    - **record_ids**: List of DOIs to include (non-empty array)
+    - **user_data**: User information object with name, email, organisation (all required)
 
-    Query Parameters:
-    - catalog_id: The catalog identifier (e.g., 'mims')
-    - record_dois: List of DOI strings to bundle
+    The endpoint automatically extracts client IP and user-agent from HTTP headers
+    for audit logging purposes.
 
-    Request Body (JSON):
-    {
-        "user_metadata": {
-            "name": "User Name",
-            "email": "user@example.com",
-            "organisation": "Organisation Name",
-            "reason": "Research purposes"
-        }
-    }
+    Returns binary ZIP file with structure:
+        /Record_Title/metadata.pdf
+        /Record_Title/data_file
 
-    Returns:
-    - StreamingResponse with ZIP file
+    Response headers:
+    - X-Bundle-Record-Count: Number of successfully processed records
+    - X-Bundle-Failed-Count: Number of failed records
     """
-    # Parse request body
     try:
-        body = await request.json()
-        user_metadata = body.get('user_metadata', {})
-    except Exception as e:
-        raise HTTPException(400, f'Invalid JSON payload: {str(e)}')
+        # Extract user data and request metadata
+        user_data_dict = {
+            'name': user_data.name,
+            'email': user_data.email,
+            'organisation': user_data.organisation,
+        }
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get('user-agent')
 
-    # Validate inputs
-    if not record_dois:
-        raise HTTPException(400, 'record_dois parameter is required')
-    if not user_metadata.get('email'):
-        raise HTTPException(400, 'user_metadata.email is required')
+        # Delegate to library function for ZIP generation
+        from odp.lib.zip_generator import create_zip_bundle
 
-    # Maximum 2 GB per bundle
-    MAX_BUNDLE_SIZE = 2 * 1024 * 1024 * 1024
+        zip_bytes, metadata = create_zip_bundle(
+            record_ids=record_ids,
+            user_data=user_data_dict,
+            client_ip=client_ip,
+            user_agent=user_agent
+        )
 
-    try:
-        # Validate that all records exist
-        with Session() as session:
-            for doi in record_dois:
-                record = session.query(CatalogRecord).filter(
-                    CatalogRecord.catalog_id == catalog_id,
-                    CatalogRecord.doi == doi
-                ).first()
-                if not record:
-                    raise HTTPException(404, f'Record {doi} not found')
-
-        # Create ZIP buffer
-        zip_buffer = BytesIO()
-        total_size = 0
-        processed_records = []
-        files_added = []  # Track files added to ZIP
-
-        with ZipFile(zip_buffer, 'w', ZIP_DEFLATED) as zip_file:
-            for doi in record_dois:
-                try:
-                    # Fetch record metadata
-                    with Session() as session:
-                        catalog_record = session.query(CatalogRecord).filter(
-                            CatalogRecord.catalog_id == catalog_id,
-                            CatalogRecord.doi == doi
-                        ).first()
-
-                        if not catalog_record:
-                            continue
-
-                        # Safe folder name from DOI
-                        record_title = doi.replace('/', '_')[:50]
-
-                        # Get record data
-                        record_data = catalog_record.record.to_dict() if hasattr(catalog_record, 'record') else {}
-
-                    # Generate metadata PDF using unified module
-                    try:
-                        from odp.lib.metadata_adapters import adapt_metadata
-                        from odp.lib.metadata_pdf import generate_pdf
-
-                        if not record_data:
-                            continue
-
-                        # Extract metadata and adapt to unified format
-                        metadata = record_data.get('metadata', {})
-                        keywords = record_data.get('keywords', [])
-
-                        try:
-                            # Adapt to unified RecordMetadata format
-                            record_metadata = adapt_metadata(metadata)
-                            if keywords:
-                                record_metadata.keywords = keywords
-
-                            # Generate PDF from unified format
-                            pdf_buffer = generate_pdf(record_metadata)
-                        except (ValueError, KeyError) as adapt_err:
-                            # Fallback to legacy function for backward compatibility
-                            pdf_buffer = build_metadata_pdf(record_data)
-
-                        pdf_blob = pdf_buffer.getvalue()
-
-                        if not pdf_blob:
-                            continue
-
-                        folder_name = record_title
-                        pdf_filename = f'{folder_name}/metadata.pdf'
-                        pdf_size = len(pdf_blob)
-
-                        zip_file.writestr(pdf_filename, pdf_blob)
-                        total_size += pdf_size
-                        processed_records.append(doi)
-
-                        # Track file information
-                        files_added.append({
-                            'name': pdf_filename,
-                            'size': pdf_size,
-                            'doi': doi,
-                            'type': 'metadata_pdf'
-                        })
-
-                    except Exception as pdf_err:
-                        continue
-
-                    # Check size limit
-                    if total_size > MAX_BUNDLE_SIZE:
-                        raise HTTPException(413, 'Bundle exceeds maximum size of 2 GB')
-
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    continue
-
-        # ZipFile context is closed, get final ZIP size
-        # The buffer now contains the complete ZIP file
-        zip_contents = zip_buffer.getvalue()
-        final_size = len(zip_contents)
-        zip_buffer.seek(0)
-
-        # Log to download_audit
-        try:
-
-            with Session() as session:
-                audit = DownloadAudit(
-                    client_id='mims-client',
-                    user_id=None,
-                    download_url=f'/catalog/download/bundle?catalog_id={catalog_id}',
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get('user-agent'),
-                    file_size=final_size if final_size > 0 else None,
-                    success=True,
-                    timestamp=datetime.now(timezone.utc),
-                    meta={
-                        'name': user_metadata.get('name', 'N/A'),
-                        'email': user_metadata.get('email', 'N/A'),
-                        'organisation': user_metadata.get('organisation', 'N/A'),
-                        'download_type': 'zip_bundle',
-                        'record_count': len(processed_records),
-                        'dois': processed_records,
-                        'reason': user_metadata.get('reason', 'N/A'),
-                        'source': 'MIMS-UI-Bundle',
-                        'bundle_size_bytes': final_size,
-                        'files_in_bundle': files_added,
-                        'total_files': len(files_added),
-                        'zip_file_size': final_size,
-                    }
-                )
-                session.add(audit)
-                session.commit()
-        except Exception as audit_err:
-            pass
-
-        # Return as streaming response
+        # Return streaming response with metadata headers
         return StreamingResponse(
-            iter([zip_buffer.getvalue()]),
+            iter([zip_bytes]),
             media_type='application/zip',
             headers={
                 'Content-Disposition': 'attachment; filename="records.zip"',
-                'Content-Length': str(final_size)
+                'Content-Length': str(len(zip_bytes)),
+                'X-Bundle-Record-Count': str(metadata['record_count']),
+                'X-Bundle-Failed-Count': str(metadata['failed_count']),
             }
         )
 
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.warning(f"ZIP generation validation error: {str(e)}")
+        raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f'Error creating bundle: {str(e)}')
-
-
-# ============================================================================
-# PDF Generation API Endpoints (Unified Module)
-# ============================================================================
-
-@router.post(
-    '/metadata/generate-pdf',
-    response_class=StreamingResponse,
-    summary='Generate PDF from metadata',
-    description='Generate a PDF from metadata in DataCite4 or ISO19115 format',
-    include_in_schema=True,
-)
-async def generate_metadata_pdf(request: Request):
-    """
-    Generate PDF from raw metadata.
-
-    Accepts metadata in either DataCite4 or ISO19115 format.
-    Automatically detects format or uses specified schema_id.
-
-    Request body:
-    {
-        "metadata_format": "auto|datacite4|iso19115",
-        "metadata": {...},
-        "keywords": [...],
-        "temporal_start": "ISO 8601 date",
-        "temporal_end": "ISO 8601 date"
-    }
-    """
-    try:
-        from odp.lib.metadata_adapters import adapt_metadata
-        from odp.lib.metadata_pdf import generate_pdf
-
-        body = await request.json()
-
-        # Get parameters
-        metadata = body.get('metadata')
-        metadata_format = body.get('metadata_format', 'auto')
-        keywords = body.get('keywords', [])
-        temporal_start = body.get('temporal_start')
-        temporal_end = body.get('temporal_end')
-
-        if not metadata:
-            raise HTTPException(400, 'metadata field is required')
-
-        # Adapt metadata to unified format
-        try:
-            record_metadata = adapt_metadata(metadata, schema_id=metadata_format)
-        except ValueError as e:
-            raise HTTPException(422, f'Could not process metadata: {str(e)}')
-
-        # Override with request parameters if provided
-        if keywords:
-            record_metadata.keywords = keywords
-        if temporal_start:
-            from odp.lib.metadata_pdf import TemporalExtent
-            if temporal_end:
-                record_metadata.temporal = TemporalExtent(
-                    start_date=temporal_start,
-                    end_date=temporal_end
-                )
-
-        # Generate PDF
-        try:
-            pdf_buffer = generate_pdf(record_metadata)
-            pdf_content = pdf_buffer.getvalue()
-        except ValueError as e:
-            raise HTTPException(500, f'PDF generation failed: {str(e)}')
-
-        # Note: PDF generation is typically called internally by other endpoints
-        # (e.g., MIMS downloads or ZIP bundle generation) which handle their own
-        # audit logging. We don't log here to avoid duplicate audit entries.
-
-        return StreamingResponse(
-            iter([pdf_content]),
-            media_type='application/pdf',
-            headers={
-                'Content-Disposition': 'attachment; filename="metadata.pdf"',
-                'Content-Length': str(len(pdf_content))
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f'Internal server error: {str(e)}')
-
-
-@router.post(
-    '/{catalog_id}/records/{record_id}/metadata.pdf',
-    response_class=StreamingResponse,
-    summary='Generate PDF for specific record',
-    description='Generate PDF for a catalog record by ID',
-)
-async def generate_record_pdf(
-    catalog_id: str,
-    record_id: UUID,
-    request: Request,
-):
-    """
-    Generate PDF for a specific catalog record.
-
-    Retrieves record metadata and generates PDF directly.
-    """
-    try:
-        from odp.lib.metadata_adapters import adapt_metadata
-        from odp.lib.metadata_pdf import generate_pdf
-
-        # Fetch record from database
-        stmt = select(CatalogRecord).where(
-            and_(
-                CatalogRecord.catalog_id == catalog_id,
-                CatalogRecord.record_id == record_id,
-                CatalogRecord.published == True
-            )
-        )
-
-        if not (catalog_record := Session.execute(stmt).scalar_one_or_none()):
-            raise HTTPException(404, 'Record not found')
-
-        # Extract metadata
-        metadata = catalog_record.record.data.get('metadata', {})
-        keywords = catalog_record.record.data.get('keywords', [])
-
-        # Adapt to unified format
-        try:
-            record_metadata = adapt_metadata(metadata)
-            if keywords:
-                record_metadata.keywords = keywords
-        except ValueError as e:
-            raise HTTPException(422, f'Could not process metadata: {str(e)}')
-
-        # Generate PDF
-        try:
-            pdf_buffer = generate_pdf(record_metadata)
-            pdf_content = pdf_buffer.getvalue()
-        except ValueError as e:
-            raise HTTPException(500, f'PDF generation failed: {str(e)}')
-
-        # Note: PDF generation is typically called internally by other endpoints
-        # which handle their own audit logging. We don't log here to avoid
-        # duplicate or incomplete audit entries.
-
-        return StreamingResponse(
-            iter([pdf_content]),
-            media_type='application/pdf',
-            headers={
-                'Content-Disposition': f'attachment; filename="record_{record_id}.pdf"',
-                'Content-Length': str(len(pdf_content))
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f'Internal server error: {str(e)}')
-
-
-# ============================================================================
-# PDF Generation Utility (Legacy - Kept for backward compatibility)
-# ============================================================================
-
-def build_metadata_pdf(record_data: dict) -> BytesIO:
-    """
-    Generate a metadata PDF for a single catalog record.
-    
-    Args:
-        record_data: Dictionary containing record metadata with structure:
-                    {
-                        "metadata_records": [{
-                            "metadata": {...datacite fields...}
-                        }],
-                        "keywords": [...],
-                        "temporal_start": "ISO timestamp",
-                        "temporal_end": "ISO timestamp"
-                    }
-    
-    Returns:
-        BytesIO buffer containing the PDF
-    """
-    try:
-        # Extract metadata
-        meta = record_data.get("metadata_records", [{}])[0].get("metadata", {})
-        
-        # Helper function to extract person details
-        def _get_person(person):
-            """Extract name, affiliation, email, and ORCID from person dict."""
-            name = person.get("name", "N/A")
-            affiliation = "N/A"
-            email = "N/A"
-            orcid = "N/A"
-
-            for aff in person.get("affiliation", []):
-                if "email:" in aff.get("affiliation", ""):
-                    affiliation, email = map(str.strip, aff["affiliation"].split(", email:"))
-                else:
-                    affiliation = aff.get("affiliation", "N/A")
-
-            for idf in person.get("nameIdentifiers", []):
-                if idf.get("nameIdentifierScheme") == "ORCID":
-                    orcid = idf.get("nameIdentifier", "N/A")
-
-            return name, affiliation, email, orcid
-
-        # Extract high-level fields
-        title = meta.get("titles", [{}])[0].get("title", "Untitled")
-        doi = meta.get("doi", "N/A")
-        publisher = meta.get("publisher", "N/A")
-        pub_year = meta.get("publicationYear", "N/A")
-        keywords = ", ".join(record_data.get("keywords", []))
-
-        abstract = meta.get("descriptions", [{}])[0].get("description", "N/A")
-        
-        # Format temporal extent
-        try:
-            t_start = datetime.fromisoformat(record_data.get("temporal_start", "")).strftime("%d %b %Y")
-            t_end = datetime.fromisoformat(record_data.get("temporal_end", "")).strftime("%d %b %Y")
-        except (ValueError, AttributeError):
-            t_start = record_data.get("temporal_start", "N/A")
-            t_end = record_data.get("temporal_end", "N/A")
-
-        # Geographic extent
-        try:
-            geo_box = meta.get("geoLocations", [{}])[0].get("geoLocationBox", {})
-            geo_str = (
-                f"North: {geo_box.get('northBoundLatitude', 'N/A')}\n"
-                f"South: {geo_box.get('southBoundLatitude', 'N/A')}\n"
-                f"West: {geo_box.get('westBoundLongitude', 'N/A')}\n"
-                f"East: {geo_box.get('eastBoundLongitude', 'N/A')}"
-            )
-        except (IndexError, KeyError):
-            geo_str = "N/A"
-
-        # Creator and contributor info
-        creator = meta.get("creators", [{}])[0]
-        contributor = meta.get("contributors", [{}])[0]
-        cr_name, cr_aff, cr_email, cr_orcid = _get_person(creator)
-        c_name, c_aff, c_email, c_orcid = _get_person(contributor)
-
-        # License info
-        try:
-            licence = meta.get("rightsList", [{}])[0]
-            licence_txt = f'<link href="{licence.get("rightsURI", "#")}">{licence.get("rights", "N/A")}</link>'
-        except (IndexError, KeyError):
-            licence_txt = "N/A"
-
-        # Setup styles
-        styles = getSampleStyleSheet()
-        label_style = ParagraphStyle(
-            "label",
-            parent=styles["BodyText"],
-            fontSize=10,
-            leading=13,
-            spaceAfter=0,
-            spaceBefore=2,
-            leftIndent=0,
-            rightIndent=6,
-            textColor=colors.black,
-            wordWrap="LTR",
-            bold=True,
-        )
-        value_style = ParagraphStyle(
-            "value",
-            parent=styles["BodyText"],
-            fontSize=10,
-            leading=13,
-            spaceAfter=0,
-            spaceBefore=2,
-        )
-        title_value_style = ParagraphStyle(
-            "title_value",
-            parent=value_style,
-            fontSize=11,
-            leading=14,
-            spaceBefore=0,
-            spaceAfter=2,
-            bold=True,
-        )
-
-        # Build table rows
-        rows = [
-            [Paragraph("Title", label_style), Paragraph(title, title_value_style)],
-            [Paragraph("DOI", label_style), Paragraph(f'<link href="https://doi.org/{doi}">https://doi.org/{doi}</link>', value_style)],
-            [Paragraph("Authors", label_style), Paragraph(f"{cr_name}<br/>{cr_aff}, email: {cr_email}", value_style)],
-            [Paragraph("Publisher", label_style), Paragraph(f"{publisher} ({pub_year})", value_style)],
-            [Paragraph("Contributors", label_style), Paragraph(f"Contact Person: {c_name}<br/>{c_aff},<br/>email: {c_email}", value_style)],
-            [Paragraph("Abstract", label_style), Paragraph(abstract, value_style)],
-            [Paragraph("Data", label_style), Paragraph(licence_txt, value_style)],
-            [Paragraph("Temporal extent", label_style), Paragraph(f"{t_start} – {t_end}", value_style)],
-            [Paragraph("Geographic extent", label_style), Paragraph(geo_str.replace("\n", "<br/>"), value_style)],
-            [Paragraph("Keywords", label_style), Paragraph(keywords, value_style)],
-        ]
-
-        # Create table
-        table = Table(
-            rows,
-            colWidths=[1.6 * inch, 5.3 * inch],
-            hAlign="LEFT",
-            repeatRows=0,
-        )
-
-        # Table styling
-        tbl_style = [
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.25, colors.lightgrey),
-        ]
-        for r in range(1, len(rows)):
-            tbl_style.append(("LINEBELOW", (0, r), (-1, r), 0.25, colors.lightgrey))
-
-        table.setStyle(TableStyle(tbl_style))
-
-        # Build PDF
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            rightMargin=40,
-            leftMargin=40,
-            topMargin=40,
-            bottomMargin=40,
-        )
-
-        story = [table, Spacer(1, 0.2 * inch)]
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
-
-    except Exception as e:
-        raise
+        logger.error(f"ZIP generation error: {str(e)}")
+        raise HTTPException(500, "Internal server error")

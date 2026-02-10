@@ -395,9 +395,9 @@ async def export_downloads_csv(
                 if doi:
                     view_link = f"{mims_url}/{doi}"
             elif download_type == 'zip_bundle':
-                dois = d.meta.get('dois') if d.meta else []
-                if dois and isinstance(dois, list) and len(dois) > 0:
-                    query_parts = [f'record_id_or_doi_list={doi}' for doi in dois]
+                record_ids = d.meta.get('record_ids') if d.meta else []
+                if record_ids and isinstance(record_ids, list) and len(record_ids) > 0:
+                    query_parts = [f'record_id_or_doi_list={record_id}' for record_id in record_ids]
                     query_string = '&'.join(query_parts)
                     view_link = f"{mims_url}/subset?{query_string}&page=1&size=50"
 
