@@ -198,7 +198,7 @@ def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_rec
     is_single_record = len(dois) == 1
 
     with Session() as session:
-        meta_data = {
+        audit_meta = {
             'name': user_data.get('name'),
             'email': user_data.get('email'),
             'organisation': user_data.get('organisation'),
@@ -207,15 +207,15 @@ def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_rec
 
         # Switch logic based on count
         if is_single_record:
-            meta_data['download_type'] = 'single_record'
-            meta_data['doi'] = dois[0]
+            audit_meta['download_type'] = 'single_record'
+            audit_meta['doi'] = dois[0]
             # Store the input identifier as well, just in case
             if len(record_ids) > 0:
-                meta_data['record_id'] = record_ids[0]
+                audit_meta['record_id'] = record_ids[0]
         else:
-            meta_data['download_type'] = 'zip_bundle'
-            meta_data['record_ids'] = record_ids
-            meta_data['dois'] = dois
+            audit_meta['download_type'] = 'zip_bundle'
+            audit_meta['record_ids'] = record_ids
+            audit_meta['dois'] = dois
 
         audit = DownloadAudit(
             client_id='odp-server-zip-generator',
@@ -225,7 +225,7 @@ def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_rec
             file_size=file_size,
             success=True,
             timestamp=datetime.now(timezone.utc),
-            meta=meta_data
+            meta=audit_meta
         )
         session.add(audit)
         session.commit()

@@ -509,11 +509,7 @@ def generate_zip_bundle(
     """
     try:
         # Extract user data and request metadata
-        user_data_dict = {
-            'name': user_data.name,
-            'email': user_data.email,
-            'organisation': user_data.organisation,
-        }
+
         client_ip = request.client.host if request.client else None
         user_agent = request.headers.get('user-agent')
 
@@ -522,7 +518,7 @@ def generate_zip_bundle(
 
         zip_bytes, metadata = create_zip_bundle(
             record_ids=record_ids,
-            user_data=user_data_dict,
+            user_data=user_data.dict(),
             client_ip=client_ip,
             user_agent=user_agent
         )
