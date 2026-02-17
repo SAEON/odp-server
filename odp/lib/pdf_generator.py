@@ -1,26 +1,6 @@
-"""
-Unified PDF generation module for catalog metadata.
-
-This module provides schema-agnostic PDF generation for catalog records.
-It supports both DataCite and ISO19115 metadata formats through an adapter pattern.
-
-Usage:
-    from odp.lib.metadata_pdf import generate_pdf
-    from odp.lib.metadata_adapters import adapt_metadata
-
-    # Adapt raw metadata to unified format
-    normalized = adapt_metadata(raw_metadata, schema_id="auto")
-
-    # Generate PDF
-    pdf_buffer = generate_pdf(normalized)
-
-    # Use buffer
-    pdf_bytes = pdf_buffer.getvalue()
-"""
-
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Dict, Optional, List
+from typing import Optional, List
 
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet

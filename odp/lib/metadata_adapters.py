@@ -1,32 +1,7 @@
-"""
-Metadata schema adapters for normalizing different metadata formats.
-
-This module provides adapters to convert DataCite 4, ISO19115, and other
-metadata schemas into the unified RecordMetadata format for PDF generation.
-
-The adapter pattern allows:
-- Support for multiple schemas without modifying PDF generation code
-- Easy addition of new schemas
-- Graceful fallback when schemas are partial or inconsistent
-
-Usage:
-    from odp.lib.metadata_adapters import adapt_metadata
-
-    # Auto-detect and adapt
-    normalized = adapt_metadata(raw_metadata)
-
-    # Explicit schema
-    normalized = adapt_metadata(raw_metadata, schema_id="SAEON.DataCite4")
-
-    # With fallback
-    normalized = adapt_metadata(raw_metadata, schema_id="auto", fallback=True)
-"""
-
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
-from datetime import datetime
 
-from odp.lib.metadata_pdf import (
+from odp.lib.pdf_generator import (
     RecordMetadata,
     PersonInfo,
     GeographicExtent,
@@ -48,345 +23,184 @@ class MetadataAdapter(ABC):
         """Convert raw metadata to unified RecordMetadata format."""
         pass
 
+    def _parse_person_info(self, person_data: Dict[str, Any]) -> PersonInfo:
+        """
+        Shared helper to extract person details and reduce code duplication.
+        Handles varied structures between DataCite and ISO19115.
+        """
+        person = PersonInfo()
+        person.name = (
+                person_data.get("name") or
+                person_data.get("individualName") or
+                "N/A"
+        )
+
+        # Extract affiliation / organization
+        affiliations = person_data.get("affiliation", [])
+        if isinstance(affiliations, list) and affiliations:
+            person.affiliation = affiliations[0].get("affiliation", "N/A")
+        else:
+            person.affiliation = person_data.get("organizationName", "N/A")
+
+        # Extract email from affiliation strings or contactInfo
+        search_target = str(person_data.get("contactInfo", ""))
+        if not search_target and isinstance(affiliations, list):
+            search_target = " ".join([str(a.get("affiliation", "")) for a in affiliations])
+
+        if "email:" in search_target.lower():
+            # Basic extraction: split at email: and take the next word
+            parts = search_target.lower().split("email:")
+            if len(parts) > 1:
+                person.email = parts[-1].strip().split()[0].rstrip(',;')
+
+        # Extract ORCID (DataCite specific)
+        for identifier in person_data.get("nameIdentifiers", []):
+            if identifier.get("nameIdentifierScheme") == "ORCID":
+                person.orcid = identifier.get("nameIdentifier", "N/A")
+
+        return person
+
 
 class DataCiteAdapter(MetadataAdapter):
-    """Adapter for DataCite 4 metadata schema.
-
-    DataCite structure:
-    {
-        "titles": [{"title": "..."}],
-        "doi": "10.15493/...",
-        "publisher": "...",
-        "publicationYear": 2024,
-        "creators": [...],
-        "descriptions": [...],
-        "geoLocations": [...],
-        "rightsList": [...],
-        ...
-    }
-    """
+    """Adapter for DataCite 4 metadata schema."""
 
     def can_handle(self, metadata: Dict[str, Any]) -> bool:
-        """Check if this looks like DataCite metadata."""
-        # DataCite has specific markers
-        has_doi = "doi" in metadata
-        has_titles = "titles" in metadata
-        has_creators = "creators" in metadata
-        return has_doi and has_titles and has_creators
+        return "doi" in metadata and "titles" in metadata and "creators" in metadata
 
     def adapt(self, metadata: Dict[str, Any]) -> RecordMetadata:
-        """Convert DataCite metadata to unified format."""
-        try:
-            # Extract title
-            title = "N/A"
-            if "titles" in metadata and metadata["titles"]:
-                title = metadata["titles"][0].get("title", "N/A")
+        # Use helper for creators
+        creator = PersonInfo()
+        if metadata.get("creators"):
+            creator = self._parse_person_info(metadata["creators"][0])
 
-            # Extract DOI
-            doi = metadata.get("doi", "N/A")
+        # Use helper for contact person
+        contact = PersonInfo()
+        for contributor in metadata.get("contributors", []):
+            if contributor.get("contributorType") == "ContactPerson":
+                contact = self._parse_person_info(contributor)
+                break
 
-            # Extract publisher and year
-            publisher = metadata.get("publisher", "N/A")
-            publication_year = str(metadata.get("publicationYear", "N/A"))
+        # Extract abstract
+        abstract = "N/A"
+        for desc in metadata.get("descriptions", []):
+            if desc.get("descriptionType") == "Abstract":
+                abstract = desc.get("description", "N/A")
+                break
 
-            # Extract abstract
-            abstract = "N/A"
-            if "descriptions" in metadata and metadata["descriptions"]:
-                for desc in metadata["descriptions"]:
-                    if desc.get("descriptionType") == "Abstract":
-                        abstract = desc.get("description", "N/A")
-                        break
+        # Extract license
+        license_info = License()
+        if metadata.get("rightsList"):
+            rights = metadata["rightsList"][0]
+            license_info.text = rights.get("rights", "N/A")
+            license_info.uri = rights.get("rightsURI", "")
 
-            # Extract keywords
+        # Extract geography
+        geography = GeographicExtent(north=0, south=0, east=0, west=0)
+        if metadata.get("geoLocations"):
+            box = metadata["geoLocations"][0].get("geoLocationBox")
+            if box:
+                geography = GeographicExtent(
+                    north=float(box.get("northBoundLatitude", 0)),
+                    south=float(box.get("southBoundLatitude", 0)),
+                    east=float(box.get("eastBoundLongitude", 0)),
+                    west=float(box.get("westBoundLongitude", 0)),
+                )
+        subjects = metadata.get("subjects", [])
+        keywords = [s.get("subject") for s in subjects if isinstance(s, dict) and s.get("subject")]
+        if not keywords:
             keywords = metadata.get("keywords", [])
-            if isinstance(keywords, str):
-                keywords = [keywords]
-            keywords = [k for k in keywords if k]  # Filter empty strings
 
-            # Extract creator
-            creator = PersonInfo()
-            if "creators" in metadata and metadata["creators"]:
-                creator_data = metadata["creators"][0]
-                creator.name = creator_data.get("name", "N/A")
-
-                # Extract affiliation
-                if "affiliation" in creator_data and creator_data["affiliation"]:
-                    creator.affiliation = creator_data["affiliation"][0].get(
-                        "affiliation", "N/A"
-                    )
-
-                # Extract email from affiliation string
-                for aff in creator_data.get("affiliation", []):
-                    aff_str = aff.get("affiliation", "")
-                    if "email:" in aff_str:
-                        creator.email = aff_str.split("email:")[-1].strip()
-                        break
-
-                # Extract ORCID
-                for identifier in creator_data.get("nameIdentifiers", []):
-                    if identifier.get("nameIdentifierScheme") == "ORCID":
-                        creator.orcid = identifier.get("nameIdentifier", "N/A")
-                        break
-
-            # Extract contact/contributor
-            contact = PersonInfo()
-            if "contributors" in metadata and metadata["contributors"]:
-                for contributor in metadata["contributors"]:
-                    if contributor.get("contributorType") == "ContactPerson":
-                        contact.name = contributor.get("name", "N/A")
-
-                        if "affiliation" in contributor and contributor["affiliation"]:
-                            contact.affiliation = contributor["affiliation"][0].get(
-                                "affiliation", "N/A"
-                            )
-
-                        for aff in contributor.get("affiliation", []):
-                            aff_str = aff.get("affiliation", "")
-                            if "email:" in aff_str:
-                                contact.email = aff_str.split("email:")[-1].strip()
-                                break
-                        break
-
-            # Extract license
-            license_info = License()
-            if "rightsList" in metadata and metadata["rightsList"]:
-                license_data = metadata["rightsList"][0]
-                license_info.text = license_data.get("rights", "N/A")
-                license_info.uri = license_data.get("rightsURI", "")
-
-            # Extract geographic extent
-            geography = None
-            if "geoLocations" in metadata and metadata["geoLocations"]:
-                geo_loc = metadata["geoLocations"][0]
-                if "geoLocationBox" in geo_loc:
-                    box = geo_loc["geoLocationBox"]
-                    geography = GeographicExtent(
-                        north=float(box.get("northBoundLatitude", 0)),
-                        south=float(box.get("southBoundLatitude", 0)),
-                        east=float(box.get("eastBoundLongitude", 0)),
-                        west=float(box.get("westBoundLongitude", 0)),
-                    )
-
-            # Extract temporal extent (from record level, not metadata)
-            temporal = TemporalExtent()
-
-            return RecordMetadata(
-                title=title,
-                doi=doi,
-                publisher=publisher,
-                publication_year=publication_year,
-                abstract=abstract,
-                keywords=keywords,
-                creator=creator,
-                contact=contact,
-                license=license_info,
-                geography=geography,
-                temporal=temporal,
-            )
-
-        except Exception as e:
-            raise ValueError(f"DataCite adaptation failed: {str(e)}") from e
+        return RecordMetadata(
+            title=metadata["titles"][0].get("title", "N/A") if metadata.get("titles") else "N/A",
+            doi=metadata.get("doi", "N/A"),
+            publisher=metadata.get("publisher", "N/A"),
+            publication_year=str(metadata.get("publicationYear", "N/A")),
+            abstract=abstract,
+            keywords=keywords,
+            creator=creator,
+            contact=contact,
+            license=license_info,
+            geography=geography,
+            temporal=TemporalExtent(),
+        )
 
 
 class ISO19115Adapter(MetadataAdapter):
-    """Adapter for ISO 19115 metadata schema.
-
-    ISO19115 structure:
-    {
-        "title": "...",
-        "fileIdentifier": "...",
-        "abstract": "...",
-        "responsibleParties": [...],
-        "constraints": [...],
-        "extent": {...},
-        ...
-    }
-    """
+    """Adapter for ISO 19115 metadata schema."""
 
     def can_handle(self, metadata: Dict[str, Any]) -> bool:
-        """Check if this looks like ISO19115 metadata."""
-        # ISO19115 has specific markers
-        has_title = "title" in metadata
-        has_file_id = "fileIdentifier" in metadata
-        has_responsible = "responsibleParties" in metadata
-        return has_title and has_file_id and has_responsible
+        return "title" in metadata and "fileIdentifier" in metadata and "responsibleParties" in metadata
 
     def adapt(self, metadata: Dict[str, Any]) -> RecordMetadata:
-        """Convert ISO19115 metadata to unified format."""
-        try:
-            # Extract title
-            title = metadata.get("title", "N/A")
+        creator = PersonInfo()
+        contact = PersonInfo()
+        publisher = "N/A"
 
-            # Extract DOI from fileIdentifier
-            doi = metadata.get("fileIdentifier", "N/A")
+        for party in metadata.get("responsibleParties", []):
+            role = party.get("role")
+            if role == "originator":
+                creator = self._parse_person_info(party)
+            elif role == "pointOfContact":
+                contact = self._parse_person_info(party)
+            elif role == "publisher":
+                publisher = party.get("organizationName", "N/A")
 
-            # Extract publisher from responsibleParties
-            publisher = "N/A"
-            if "responsibleParties" in metadata:
-                for party in metadata["responsibleParties"]:
-                    if party.get("role") == "publisher":
-                        publisher = party.get("organizationName", "N/A")
-                        break
+        # Extract license
+        license_info = License()
+        if metadata.get("constraints"):
+            constraint = metadata["constraints"][0]
+            license_info.text = constraint.get("rights", "N/A")
+            license_info.uri = constraint.get("rightsURI", "")
 
-            # Extract publication year (if available in metadata)
-            publication_year = "N/A"
+        # Extract geography
+        geography = GeographicExtent(north=0, south=0, east=0, west=0)
+        if metadata.get("extent") and metadata["extent"].get("geographicElements"):
+            box = metadata["extent"]["geographicElements"][0].get("boundingBox")
+            if box:
+                geography = GeographicExtent(
+                    north=float(box.get("northBoundLatitude", 0)),
+                    south=float(box.get("southBoundLatitude", 0)),
+                    east=float(box.get("eastBoundLongitude", 0)),
+                    west=float(box.get("westBoundLongitude", 0)),
+                )
 
-            # Extract abstract
-            abstract = metadata.get("abstract", "N/A")
-
-            # Extract keywords
-            keywords = metadata.get("keywords", [])
-            if isinstance(keywords, str):
-                keywords = [keywords]
-            keywords = [k for k in keywords if k]
-
-            # Extract creator from responsibleParties with role="originator"
-            creator = PersonInfo()
-            if "responsibleParties" in metadata:
-                for party in metadata["responsibleParties"]:
-                    if party.get("role") == "originator":
-                        creator.name = party.get("individualName", "N/A")
-                        creator.affiliation = party.get("organizationName", "N/A")
-
-                        # Extract email from contactInfo
-                        contact_info = party.get("contactInfo", "")
-                        if "email:" in contact_info:
-                            creator.email = contact_info.split("email:")[-1].strip()
-                        break
-
-            # Extract contact from responsibleParties with role="pointOfContact"
-            contact = PersonInfo()
-            if "responsibleParties" in metadata:
-                for party in metadata["responsibleParties"]:
-                    if party.get("role") == "pointOfContact":
-                        contact.name = party.get("individualName", "N/A")
-                        contact.affiliation = party.get("organizationName", "N/A")
-
-                        contact_info = party.get("contactInfo", "")
-                        if "email:" in contact_info:
-                            contact.email = contact_info.split("email:")[-1].strip()
-                        break
-
-            # Extract license from constraints
-            license_info = License()
-            if "constraints" in metadata and metadata["constraints"]:
-                constraint = metadata["constraints"][0]
-                license_info.text = constraint.get("rights", "N/A")
-                license_info.uri = constraint.get("rightsURI", "")
-
-            # Extract geographic extent
-            geography = None
-            if "extent" in metadata:
-                extent = metadata["extent"]
-                if "geographicElements" in extent and extent["geographicElements"]:
-                    geo_elem = extent["geographicElements"][0]
-                    if "boundingBox" in geo_elem:
-                        box = geo_elem["boundingBox"]
-                        geography = GeographicExtent(
-                            north=float(box.get("northBoundLatitude", 0)),
-                            south=float(box.get("southBoundLatitude", 0)),
-                            east=float(box.get("eastBoundLongitude", 0)),
-                            west=float(box.get("westBoundLongitude", 0)),
-                        )
-
-            # Extract temporal extent
-            temporal = TemporalExtent()
-
-            return RecordMetadata(
-                title=title,
-                doi=doi,
-                publisher=publisher,
-                publication_year=publication_year,
-                abstract=abstract,
-                keywords=keywords,
-                creator=creator,
-                contact=contact,
-                license=license_info,
-                geography=geography,
-                temporal=temporal,
-            )
-
-        except Exception as e:
-            raise ValueError(f"ISO19115 adaptation failed: {str(e)}") from e
-
-
-class AutoDetectAdapter(MetadataAdapter):
-    """Adapter that auto-detects the schema and routes to appropriate adapter."""
-
-    def __init__(self):
-        """Initialize with available adapters."""
-        self.adapters = [DataCiteAdapter(), ISO19115Adapter()]
-
-    def can_handle(self, metadata: Dict[str, Any]) -> bool:
-        """Auto-detect always claims to handle metadata."""
-        return True
-
-    def adapt(self, metadata: Dict[str, Any]) -> RecordMetadata:
-        """Auto-detect schema and adapt using appropriate adapter."""
-        # Try each adapter in order
-        for adapter in self.adapters:
-            try:
-                if adapter.can_handle(metadata):
-                    return adapter.adapt(metadata)
-            except Exception:
-                # Try next adapter
-                continue
-
-        # If no adapter matched, raise error
-        raise ValueError(
-            "Could not detect metadata schema. Ensure metadata matches DataCite4 or ISO19115 format."
+        return RecordMetadata(
+            title=metadata.get("title", "N/A"),
+            doi=metadata.get("fileIdentifier", "N/A"),
+            publisher=publisher,
+            publication_year="N/A",
+            abstract=metadata.get("abstract", "N/A"),
+            keywords=metadata.get("keywords", []),
+            creator=creator,
+            contact=contact,
+            license=license_info,
+            geography=geography,
+            temporal=TemporalExtent(),
         )
 
 
 def adapt_metadata(
-    raw_metadata: Dict[str, Any],
-    schema_id: Optional[str] = None,
-    fallback: bool = True,
+        raw_metadata: Dict[str, Any],
+        schema_id: Optional[str] = None,
 ) -> RecordMetadata:
-    """Factory function to adapt metadata from various schemas.
-
-    Args:
-        raw_metadata: Raw metadata dictionary
-        schema_id: Schema identifier:
-            - "SAEON.DataCite4" or "datacite4": Use DataCite adapter
-            - "SAEON.ISO19115" or "iso19115": Use ISO19115 adapter
-            - "auto" or None: Auto-detect schema
-        fallback: If True and schema_id doesn't match, try auto-detection
-
-    Returns:
-        RecordMetadata: Normalized metadata
-
-    Raises:
-        ValueError: If metadata cannot be adapted
     """
-    # Map schema IDs to adapters
-    adapter_map = {
-        "datacite4": DataCiteAdapter(),
-        "SAEON.DataCite4": DataCiteAdapter(),
-        "iso19115": ISO19115Adapter(),
-        "SAEON.ISO19115": ISO19115Adapter(),
-        "auto": AutoDetectAdapter(),
-        None: AutoDetectAdapter(),
-    }
+    Factory function to adapt metadata from various schemas.
+    This replaces the AutoDetectAdapter class to maintain clean separation.
+    """
+    # 1. Direct Mapping
+    if schema_id in ("SAEON.DataCite4", "datacite4"):
+        return DataCiteAdapter().adapt(raw_metadata)
 
-    # Get appropriate adapter
-    adapter = adapter_map.get(schema_id)
+    if schema_id in ("SAEON.ISO19115", "iso19115"):
+        return ISO19115Adapter().adapt(raw_metadata)
 
-    if adapter is None:
-        # Unknown schema_id
-        if fallback:
-            # Fall back to auto-detection
-            adapter = AutoDetectAdapter()
-        else:
-            raise ValueError(f"Unknown schema_id: {schema_id}")
-
-    try:
-        return adapter.adapt(raw_metadata)
-    except Exception as e:
-        if fallback and schema_id not in ("auto", None):
-            # Try auto-detection as fallback
+    # 2. Auto-detection
+    adapters = [DataCiteAdapter(), ISO19115Adapter()]
+    for adapter in adapters:
+        if adapter.can_handle(raw_metadata):
             try:
-                return AutoDetectAdapter().adapt(raw_metadata)
+                return adapter.adapt(raw_metadata)
             except Exception:
-                pass
-        raise e
+                continue
+
+    raise ValueError("Could not detect or adapt metadata schema. Supported: DataCite4, ISO19115.")

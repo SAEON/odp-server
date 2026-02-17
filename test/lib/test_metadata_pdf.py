@@ -17,7 +17,7 @@ Coverage target: >90%
 import pytest
 from io import BytesIO
 
-from odp.lib.metadata_pdf import (
+from odp.lib.pdf_generator import (
     RecordMetadata,
     PersonInfo,
     GeographicExtent,

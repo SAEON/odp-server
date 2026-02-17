@@ -14,7 +14,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import requests
 
-from odp.lib.zip_generator import (
+from odp.lib.bundle_generator import (
     create_safe_folder_name,
     fetch_external_file,
     fetch_record_by_doi,
@@ -433,7 +433,7 @@ class TestCreateZipBundle:
         mock_fetch_file.return_value = b'CSV content'
 
         # Import and call function
-        from odp.lib.zip_generator import create_zip_bundle
+        from odp.lib.bundle_generator import create_zip_bundle
 
         zip_bytes, metadata = create_zip_bundle(
             record_ids=['10.15493/TEST'],
@@ -464,7 +464,7 @@ class TestCreateZipBundle:
 
     def test_create_zip_bundle_missing_record_ids(self):
         """Should raise ValueError if record_ids empty."""
-        from odp.lib.zip_generator import create_zip_bundle
+        from odp.lib.bundle_generator import create_zip_bundle
 
         with pytest.raises(ValueError, match="record_ids cannot be empty"):
             create_zip_bundle(
@@ -478,7 +478,7 @@ class TestCreateZipBundle:
 
     def test_create_zip_bundle_missing_user_fields(self):
         """Should raise ValueError if user_data missing required fields."""
-        from odp.lib.zip_generator import create_zip_bundle
+        from odp.lib.bundle_generator import create_zip_bundle
 
         with pytest.raises(ValueError, match="user_data missing required fields"):
             create_zip_bundle(
@@ -503,7 +503,7 @@ class TestCreateZipBundle:
         }
         mock_fetch_record.side_effect = [mock_record, None]
 
-        from odp.lib.zip_generator import create_zip_bundle
+        from odp.lib.bundle_generator import create_zip_bundle
 
         with patch('odp.lib.zip_generator.adapt_metadata') as mock_adapt:
             with patch('odp.lib.zip_generator.generate_pdf') as mock_gen_pdf:

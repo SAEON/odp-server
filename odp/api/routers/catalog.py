@@ -514,7 +514,7 @@ def generate_zip_bundle(
         user_agent = request.headers.get('user-agent')
 
         # Delegate to library function for ZIP generation
-        from odp.lib.zip_generator import create_zip_bundle
+        from odp.lib.bundle_generator import create_zip_bundle
 
         zip_bytes, metadata = create_zip_bundle(
             record_ids=record_ids,
