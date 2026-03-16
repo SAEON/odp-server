@@ -246,6 +246,7 @@ async def admin_get_submission(
 @router.put(
     '/admin/{submission_id}',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
+<<<<<<< HEAD
 )
 async def admin_update_submission(
         submission_id: int,
@@ -268,6 +269,30 @@ async def admin_update_submission(
     '/admin/{submission_id}',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
 )
+=======
+)
+async def admin_update_submission(
+        submission_id: int,
+        submission_in: SubmissionModelIn,
+):
+    if not (submission := Session.get(Submission, submission_id)):
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    submission.data = submission_in.data
+    submission.status = submission_in.status if submission_in.status else submission.status
+    submission.collection_id = submission_in.collection_id if submission_in.collection_id else submission.collection_id
+    submission.schema_id = submission_in.schema_id if submission_in.schema_id else submission.schema_id
+
+    submission.save()
+
+    return submission
+
+
+@router.delete(
+    '/{submission_id}',
+    dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
+)
+>>>>>>> 9b18e6c (Added scopes to routes and re-order them)
 async def admin_delete_submission(
         submission_id: int,
 ):
