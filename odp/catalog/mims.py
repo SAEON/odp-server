@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Iterator
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from odp.const.db import SchemaType
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, Schema
 
+logger = logging.getLogger(__name__)
 
 class MIMSCatalog(SAEONCatalog):
 
@@ -48,11 +50,11 @@ class MIMSCatalog(SAEONCatalog):
                 cannot_publish_reasons = []
                 self.evaluate_record(child_record_model, can_publish_reasons, cannot_publish_reasons)
                 is_child_published = not cannot_publish_reasons
-                print("Is a child record")
+                logger.debug(f"Record {child_id} is a child record")
             else:
                 catalog_record = Session.get(CatalogRecord, (self.catalog_id, child_id))
                 is_child_published = catalog_record.published
-                print("Is NOT a child record")
+                logger.debug(f"Record {child_id} is NOT a child record")
 
             if is_child_published:
                 for metadata_record in published_record.metadata_records:
@@ -74,7 +76,6 @@ class MIMSCatalog(SAEONCatalog):
                 metadata=self._create_jsonld_metadata(published_record, mims_catalog)
             )
         ]
-        print("jsonLD part done")
 
         # add an RIS citation record
         ris_schema = Session.get(Schema, (ODPMetadataSchema.RIS_CITATION, SchemaType.metadata))
@@ -85,14 +86,13 @@ class MIMSCatalog(SAEONCatalog):
                 metadata=self._create_ris_metadata(published_record, mims_catalog)
             )
         ]
-        print("RIS record part done")
         return published_record
 
     def _create_jsonld_metadata(
             self, published_record: PublishedSAEONRecordModel, mims_catalog
     ) -> dict[str, Any]:
         """Create a JSON-LD metadata dictionary, using the schema.org vocabulary."""
-        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
+        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)or {}
 
         title = next(
             (t.get('title') for t in datacite_metadata.get('titles', ())),
@@ -226,7 +226,7 @@ class MIMSCatalog(SAEONCatalog):
         # The resource type is the first tag that must be added.
         key_words: list[str] = self.create_keyword_index_data(published_record)
 
-        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
+        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)or {}
 
         ris_citation += handle_resource_type(datacite_metadata.get('types'))
 
