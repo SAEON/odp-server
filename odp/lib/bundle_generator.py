@@ -40,6 +40,8 @@ def create_safe_folder_name(title: str, max_length: int = 200) -> str:
 
 def fetch_external_file(url: str, timeout: int = 30) -> Optional[bytes]:
     """Download a file with logging for HTTP failures."""
+    if not url:
+        return None
     try:
         response = requests.get(url + '/download', timeout=timeout, stream=True)
         if not response.ok:
@@ -50,7 +52,7 @@ def fetch_external_file(url: str, timeout: int = 30) -> Optional[bytes]:
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
                 file_bytes += chunk
-        return file_bytes
+        return file_bytes or None
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
         return None
@@ -61,8 +63,15 @@ def create_zip_bundle(
         user_data: Dict[str, str],
         client_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
+        catalog_url: Optional[str] = None,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """Generates ZIP bundle with metadata PDFs and data files using bulk database fetching."""
+
+    if not record_ids:
+        raise ValueError("record_ids cannot be empty")
+    required = {'name', 'email', 'organisation'}
+    if not required.issubset(user_data) or not all(user_data.get(f) for f in required):
+        raise ValueError("user_data missing required fields: name, email, organisation")
 
     zip_buffer = BytesIO()
     total_file_size = 0
@@ -71,8 +80,6 @@ def create_zip_bundle(
     MAX_BUNDLE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
 
     with Session() as session:
-        # Step 1: Bulk Fetch all published records in one DB call
-        # Re think and use Record
         stmt = (
             select(CatalogRecord)
             .where(CatalogRecord.published == True)
@@ -90,7 +97,6 @@ def create_zip_bundle(
             for catalog_record in catalog_records:
                 try:
                     pub_rec = catalog_record.published_record
-
                     # Discover metadata: prefer metadata_records, fallback to root
                     metadata = None
                     if pub_rec.get("metadata_records"):
@@ -104,9 +110,8 @@ def create_zip_bundle(
                         continue
 
                     doi = catalog_record.record.doi or catalog_record.record_id
-                    resource = pub_rec.get("immutableResource")
+                    resource = metadata.get("immutableResource")
 
-                    # Step 2: Title extraction and folder sanitization
                     raw_title = (
                             metadata.get('titles', [{}])[0].get('title') or
                             metadata.get('title') or
@@ -114,10 +119,8 @@ def create_zip_bundle(
                     )
                     folder_name = create_safe_folder_name(raw_title)
 
-                    # Step 3: PDF Generation
                     try:
-                        # Use adapted generator/adapter pattern
-                        record_metadata = adapt_metadata(metadata, schema_id='auto')
+                        record_metadata = adapt_metadata(metadata)
                         pdf_buffer = generate_pdf(record_metadata)
                         pdf_content = pdf_buffer.getvalue()
 
@@ -126,7 +129,6 @@ def create_zip_bundle(
                     except Exception as e:
                         logger.error(f"PDF generation failed for {catalog_record.record_id}: {str(e)}")
 
-                    # Step 4: Resource Download
                     if resource and 'resourceDownload' in resource:
                         download_url = resource['resourceDownload'].get('downloadURL')
                         file_name = resource['resourceDownload'].get('fileName', 'data_file')
@@ -147,7 +149,6 @@ def create_zip_bundle(
 
     final_zip = zip_buffer.getvalue()
 
-    # Step 5: Simplified Audit Logging
     try:
         log_bundle_download_audit(
             record_ids,
@@ -156,7 +157,8 @@ def create_zip_bundle(
             len(final_zip),
             failed_records,
             client_ip,
-            user_agent
+            user_agent,
+            catalog_url,
         )
     except Exception as e:
         logger.error(f"Failed to log audit: {str(e)}")
@@ -170,33 +172,25 @@ def create_zip_bundle(
     }
 
 
-def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_records, client_ip, user_agent):
+def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_records, client_ip, user_agent, catalog_url=None):
     """Logs the ZIP generation event."""
+    is_single = len(record_ids) == 1
 
-    # Determine if this is a single record download or a bulk bundle
-    # We check 'dois' (successful lookups) to ensure we have valid data
-    is_single_record = len(record_ids) == 1
+    download_type = 'single_record' if is_single else 'zip_bundle'
+    doi_data = {'doi': dois[0], 'record_id': record_ids[0]} if is_single else {'record_ids': record_ids, 'dois': dois}
+
+    audit_meta = {
+        'name': user_data.get('name'),
+        'email': user_data.get('email'),
+        'organisation': user_data.get('organisation'),
+        'failed_records': failed_records,
+        'download_type': download_type,
+        **doi_data,
+    }
+    if catalog_url:
+        audit_meta['catalog_url'] = catalog_url
 
     with Session() as session:
-        audit_meta = {
-            'name': user_data.get('name'),
-            'email': user_data.get('email'),
-            'organisation': user_data.get('organisation'),
-            'failed_records': failed_records,
-        }
-
-        # Switch logic based on count
-        if is_single_record:
-            audit_meta['download_type'] = 'single_record'
-            audit_meta['doi'] = dois[0]
-            # Store the input identifier as well, just in case
-            if len(record_ids) > 0:
-                audit_meta['record_id'] = record_ids[0]
-        else:
-            audit_meta['download_type'] = 'zip_bundle'
-            audit_meta['record_ids'] = record_ids
-            audit_meta['dois'] = dois
-
         audit = DownloadAudit(
             client_id='odp-server-zip-generator',
             download_url='/catalog/generate-zip-bundle',

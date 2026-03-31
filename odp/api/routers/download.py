@@ -1,12 +1,11 @@
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, Request,Depends
+from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.auth import Authorize, Authorized
-from odp.api.models import DownloadAuditModel, DownloadStatsModel
+from odp.api.models import DownloadAuditModel, DownloadAuditResponse, DownloadStatsModel
 from odp.const import ODPScope
 from odp.db import Session
 from odp.db.models import DownloadAudit
@@ -15,22 +14,19 @@ from odp.lib import download_service
 router = APIRouter()
 
 
-@router.post('/audit', status_code=HTTP_201_CREATED)
+@router.post('/audit', status_code=HTTP_201_CREATED, response_model=DownloadAuditResponse)
 async def create_download_audit(request: Request):
     """
     Accept JSON payload to record a download audit.
     Persistence logic follows standard system methods.
     """
     payload = await request.json()
-    print(payload)
     if not isinstance(payload, dict):
         raise HTTPException(HTTP_400_BAD_REQUEST, 'Invalid JSON payload')
 
-    # Standard session management
     with Session() as session:
         meta = payload.get('meta', {}) or {}
-        # copy optional form fields into meta for storage
-        for k in ('name', 'email', 'organisation', 'doi', 'record_id'):
+        for k in ('name', 'email', 'organisation', 'doi', 'record_id', 'catalog_url'):
             if payload.get(k) is not None:
                 meta[k] = payload.get(k)
 
@@ -109,14 +105,10 @@ async def export_downloads_csv(
     """
     Delegates CSV generation to the service.
     """
-    # revist to make it generic
-    mims_url = os.getenv('MIMS_CATALOG_URL')
-
     return download_service.generate_downloads_csv(
         start_date=start_date,
         end_date=end_date,
         email=email,
         organisation=organisation,
         download_type=download_type,
-        base_url=mims_url,
     )

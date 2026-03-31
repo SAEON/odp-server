@@ -37,7 +37,7 @@ def upgrade():
     op.create_index(
         'idx_download_audit_meta_email',
         'download_audit',
-        ["(meta->'email')"],
+        [sa.text("(meta->'email')")],
         postgresql_using='gin'
     )
 
@@ -45,7 +45,7 @@ def upgrade():
     op.create_index(
         'idx_download_audit_meta_organisation',
         'download_audit',
-        ["(meta->'organisation')"],
+        [sa.text("(meta->'organisation')")],
         postgresql_using='gin'
     )
 
@@ -53,7 +53,7 @@ def upgrade():
     op.create_index(
         'idx_download_audit_meta_download_type',
         'download_audit',
-        ["(meta->'download_type')"],
+        [sa.text("(meta->'download_type')")],
         postgresql_using='gin'
     )
 
@@ -70,7 +70,7 @@ def upgrade():
     op.create_index(
         'idx_download_audit_timestamp_client_id',
         'download_audit',
-        [sa.desc('timestamp'), 'client_id'],
+        [sa.text('timestamp DESC'), 'client_id'],
         postgresql_using='btree'
     )
 

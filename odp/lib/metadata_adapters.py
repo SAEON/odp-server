@@ -109,6 +109,9 @@ class DataCiteAdapter(MetadataAdapter):
         keywords = [s.get("subject") for s in subjects if isinstance(s, dict) and s.get("subject")]
         if not keywords:
             keywords = metadata.get("keywords", [])
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        keywords = [k for k in keywords if k]
 
         return RecordMetadata(
             title=metadata["titles"][0].get("title", "N/A") if metadata.get("titles") else "N/A",
@@ -170,13 +173,20 @@ class ISO19115Adapter(MetadataAdapter):
             publisher=publisher,
             publication_year="N/A",
             abstract=metadata.get("abstract", "N/A"),
-            keywords=metadata.get("keywords", []),
+            keywords=_normalise_keywords(metadata.get("keywords", [])),
             creator=creator,
             contact=contact,
             license=license_info,
             geography=geography,
             temporal=TemporalExtent(),
         )
+
+
+def _normalise_keywords(keywords):
+    """Convert keywords to a filtered list of non-empty strings."""
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    return [k for k in keywords if k]
 
 
 def adapt_metadata(

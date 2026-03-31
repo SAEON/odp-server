@@ -28,7 +28,7 @@ def _apply_filters(query, start_date, end_date, name, email, organisation, downl
     if email:
         query = query.filter(DownloadAudit.meta['email'].astext == email)
     if name:
-        query = query.filter(DownloadAudit.meta['name'].astext == email)
+        query = query.filter(DownloadAudit.meta['name'].astext == name)
     if organisation:
         query = query.filter(DownloadAudit.meta['organisation'].astext == organisation)
     if download_type:
@@ -172,7 +172,6 @@ def generate_downloads_csv(
         email: Optional[str] = None,
         organisation: Optional[str] = None,
         download_type: Optional[str] = None,
-        base_url: Optional[str] = None,
 ) -> StreamingResponse:
     with Session() as session:
         query = _apply_filters(session.query(DownloadAudit), start_date, end_date, None, email, organisation,
@@ -186,12 +185,13 @@ def generate_downloads_csv(
         for d in downloads:
             meta = d.meta or {}
             dtype = meta.get('download_type')
+            catalog_url = meta.get('catalog_url', '')
             view_link = ""
-            if dtype == 'single_record' and meta.get('doi'):
-                view_link = f"{base_url}/{meta.get('doi')}"
-            elif dtype == 'zip_bundle' and meta.get('record_ids'):
+            if catalog_url and dtype == 'single_record' and meta.get('doi'):
+                view_link = f"{catalog_url}/{meta.get('doi')}"
+            elif catalog_url and dtype == 'zip_bundle' and meta.get('record_ids'):
                 query_string = '&'.join([f'record_id_or_doi_list={rid}' for rid in meta.get('record_ids', [])])
-                view_link = f"{base_url}/subset?{query_string}"
+                view_link = f"{catalog_url}/subset?{query_string}"
 
             writer.writerow([
                 d.id, d.timestamp.isoformat(), meta.get('name', ''), meta.get('email', ''),

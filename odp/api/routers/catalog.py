@@ -17,6 +17,7 @@ from sqlalchemy.orm import aliased, load_only
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_422_UNPROCESSABLE_ENTITY
 
 from odp.api.lib.auth import Authorize
+from odp.config import config
 from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
@@ -520,7 +521,8 @@ def generate_zip_bundle(
             record_ids=record_ids,
             user_data=user_data.dict(),
             client_ip=client_ip,
-            user_agent=user_agent
+            user_agent=user_agent,
+            catalog_url=config.ODP.API_URL,
         )
 
         # Return streaming response with metadata headers
