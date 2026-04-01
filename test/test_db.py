@@ -7,9 +7,9 @@ from odp.const import ODPScope, ODPSystemRole
 from odp.const.db import ScopeType
 from odp.db import Session
 from odp.db.models import (Catalog, Client, ClientCollection, ClientScope, Collection, CollectionTag, Provider, Record, RecordTag, Role,
-                           RoleCollection, RoleScope, Schema, Scope, Tag, User, UserRole, Vocabulary, VocabularyTerm)
+                           RoleCollection, RoleScope, Schema, Scope, Submission, Tag, User, UserRole, Vocabulary, VocabularyTerm)
 from test.factories import (CatalogFactory, ClientFactory, CollectionFactory, CollectionTagFactory, ProviderFactory, RecordFactory,
-                            RecordTagFactory, RoleFactory, SchemaFactory, ScopeFactory, TagFactory, UserFactory, VocabularyFactory)
+                            RecordTagFactory, RoleFactory, SchemaFactory, ScopeFactory, SubmissionFactory, TagFactory, UserFactory, VocabularyFactory)
 
 
 def sorted_tuples(rows):
@@ -241,3 +241,33 @@ def test_create_vocabulary():
                                 term.term_id,
                                 term.data,
                             ) for term in vocabulary.terms)
+
+
+def test_create_submission():
+    submission = SubmissionFactory()
+    result = Session.execute(
+        select(Submission).where(Submission.id == submission.id)
+    ).scalar_one()
+    assert (
+               result.id,
+               result.doi,
+               result.user_id,
+               result.data,
+               result.status,
+               result.dataset_file_name,
+               result.timestamp,
+               result.collection_id,
+               result.schema_id,
+               result.record_id,
+           ) == (
+               submission.id,
+               submission.doi,
+               submission.user_id,
+               submission.data,
+               submission.status,
+               submission.dataset_file_name,
+               submission.timestamp,
+               submission.collection_id,
+               submission.schema_id,
+               submission.record_id,
+           )

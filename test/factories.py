@@ -6,10 +6,12 @@ import factory
 from factory.alchemy import SQLAlchemyModelFactory
 from faker import Faker
 
+from odp.const.db import SubmissionStatus
 from odp.db import Session
-from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role, Schema, Scope, Tag, User,
-                           Vocabulary, VocabularyTerm)
+from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role,
+                           Submission, Schema, Scope, Tag, User, Vocabulary, VocabularyTerm)
 from test import datacite4_example, iso19115_example, eml_example
+
 fake = Faker()
 
 
@@ -351,3 +353,20 @@ class DownloadAuditFactory(ODPModelFactory):
         'organisation': fake.company(),
         'download_type': choice(('single_record', 'zip_bundle')),
     })
+
+
+class SubmissionFactory(ODPModelFactory):
+    class Meta:
+        model = Submission
+
+    doi = factory.Sequence(lambda n: f'10.5555/TestSubmission-{n}')
+    user_id = factory.Faker('uuid4')
+    data = factory.Sequence(lambda n: dict(foo=f'{fake.catch_phrase()}.{n}'))
+    status = factory.LazyFunction(lambda: choice(list(SubmissionStatus)))
+    dataset_file_name = factory.LazyFunction(lambda: f'{fake.word()}.zip' if randint(0, 1) else None)
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+
+    collection = factory.SubFactory(CollectionFactory)
+    schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115')))
+    record = factory.SubFactory(RecordFactory)
+
