@@ -5,7 +5,8 @@ Server-side ZIP bundle generation with metadata PDFs and data files.
 import logging
 import re
 from datetime import datetime, timezone
-from io import BytesIO
+import os
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 from zipfile import ZipFile, ZIP_DEFLATED
 
@@ -64,7 +65,7 @@ def create_zip_bundle(
         client_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
         catalog_url: Optional[str] = None,
-) -> Tuple[bytes, Dict[str, Any]]:
+) -> Tuple[str, Dict[str, Any]]:
     """Generates ZIP bundle with metadata PDFs and data files using bulk database fetching."""
 
     if not record_ids:
@@ -73,103 +74,114 @@ def create_zip_bundle(
     if not required.issubset(user_data) or not all(user_data.get(f) for f in required):
         raise ValueError("user_data missing required fields: name, email, organisation")
 
-    zip_buffer = BytesIO()
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    temp_zip_path = temp_zip.name
+    temp_zip.close()
+    
     total_file_size = 0
     processed_dois = []
     failed_records = []
     MAX_BUNDLE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
 
-    with Session() as session:
-        stmt = (
-            select(CatalogRecord)
-            .where(CatalogRecord.published == True)
-            .where(CatalogRecord.record_id.in_(record_ids))
-            .where(CatalogRecord.catalog_id == 'DataCite')
-        )
-        catalog_records = session.execute(stmt).scalars().all()
-
-        # Track which IDs were actually found in the DB
-        found_ids = {rec.record_id for rec in catalog_records}
-        for missing_id in set(record_ids) - found_ids:
-            failed_records.append({'doi': missing_id, 'reason': 'not_found_or_not_published'})
-
-        with ZipFile(zip_buffer, 'w', ZIP_DEFLATED) as zip_file:
-            for catalog_record in catalog_records:
-                try:
-                    pub_rec = catalog_record.published_record
-                    # Discover metadata: prefer metadata_records, fallback to root
-                    metadata = None
-                    if pub_rec.get("metadata_records"):
-                        metadata = pub_rec["metadata_records"][0].get("metadata")
-                    elif pub_rec.get("metadata"):
-                        metadata = pub_rec.get("metadata")
-
-                    if not metadata:
-                        logger.error(f"No metadata found for {catalog_record.record_id}")
-                        failed_records.append({'doi': catalog_record.record_id, 'reason': 'metadata_missing'})
-                        continue
-
-                    doi = catalog_record.record.doi or catalog_record.record_id
-                    resource = metadata.get("immutableResource")
-
-                    raw_title = (
-                            metadata.get('titles', [{}])[0].get('title') or
-                            metadata.get('title') or
-                            f"Record_{doi}"
-                    )
-                    folder_name = create_safe_folder_name(raw_title)
-
-                    try:
-                        record_metadata = adapt_metadata(metadata)
-                        pdf_buffer = generate_pdf(record_metadata)
-                        pdf_content = pdf_buffer.getvalue()
-
-                        zip_file.writestr(f"{folder_name}/metadata.pdf", pdf_content)
-                        total_file_size += len(pdf_content)
-                    except Exception as e:
-                        logger.error(f"PDF generation failed for {catalog_record.record_id}: {str(e)}")
-
-                    if resource and 'resourceDownload' in resource:
-                        download_url = resource['resourceDownload'].get('downloadURL')
-                        file_name = resource['resourceDownload'].get('fileName', 'data_file')
-                        if download_url:
-                            file_bytes = fetch_external_file(download_url)
-                            if file_bytes:
-                                zip_file.writestr(f"{folder_name}/{file_name}", file_bytes)
-                                total_file_size += len(file_bytes)
-
-                    processed_dois.append(doi)
-
-                    if total_file_size > MAX_BUNDLE_SIZE:
-                        raise HTTPException(413, 'Bundle exceeds 2GB limit')
-
-                except Exception as e:
-                    logger.error(f"Error processing {catalog_record.record_id}: {str(e)}")
-                    failed_records.append({'doi': catalog_record.record_id, 'reason': 'internal_error'})
-
-    final_zip = zip_buffer.getvalue()
-
     try:
-        log_bundle_download_audit(
-            record_ids,
-            processed_dois,
-            user_data,
-            len(final_zip),
-            failed_records,
-            client_ip,
-            user_agent,
-            catalog_url,
-        )
-    except Exception as e:
-        logger.error(f"Failed to log audit: {str(e)}")
+        with Session() as session:
+            stmt = (
+                select(CatalogRecord)
+                .where(CatalogRecord.published == True)
+                .where(CatalogRecord.record_id.in_(record_ids))
+                .where(CatalogRecord.catalog_id == 'DataCite')
+            )
+            catalog_records = session.execute(stmt).scalars().all()
 
-    return final_zip, {
-        'total_size': len(final_zip),
-        'record_count': len(processed_dois),
-        'failed_count': len(failed_records),
-        'processed': processed_dois,
-        'failed': failed_records
-    }
+            # Track which IDs were actually found in the DB
+            found_ids = {rec.record_id for rec in catalog_records}
+            for missing_id in set(record_ids) - found_ids:
+                failed_records.append({'doi': missing_id, 'reason': 'not_found_or_not_published'})
+
+            with ZipFile(temp_zip_path, 'w', ZIP_DEFLATED) as zip_file:
+                for catalog_record in catalog_records:
+                    try:
+                        pub_rec = catalog_record.published_record
+                        # Discover metadata: prefer metadata_records, fallback to root
+                        metadata = None
+                        if pub_rec.get("metadata_records"):
+                            metadata = pub_rec["metadata_records"][0].get("metadata")
+                        elif pub_rec.get("metadata"):
+                            metadata = pub_rec.get("metadata")
+
+                        if not metadata:
+                            logger.error(f"No metadata found for {catalog_record.record_id}")
+                            failed_records.append({'doi': catalog_record.record_id, 'reason': 'metadata_missing'})
+                            continue
+
+                        doi = catalog_record.record.doi or catalog_record.record_id
+                        resource = metadata.get("immutableResource")
+
+                        raw_title = (
+                                metadata.get('titles', [{}])[0].get('title') or
+                                metadata.get('title') or
+                                f"Record_{doi}"
+                        )
+                        folder_name = create_safe_folder_name(raw_title)
+
+                        try:
+                            record_metadata = adapt_metadata(metadata)
+                            pdf_buffer = generate_pdf(record_metadata)
+                            pdf_content = pdf_buffer.getvalue()
+
+                            zip_file.writestr(f"{folder_name}/metadata.pdf", pdf_content)
+                            total_file_size += len(pdf_content)
+                        except Exception as e:
+                            logger.error(f"PDF generation failed for {catalog_record.record_id}: {str(e)}")
+
+                        if resource and 'resourceDownload' in resource:
+                            download_url = resource['resourceDownload'].get('downloadURL')
+                            file_name = resource['resourceDownload'].get('fileName', 'data_file')
+                            if download_url:
+                                file_bytes = fetch_external_file(download_url)
+                                if file_bytes:
+                                    zip_file.writestr(f"{folder_name}/{file_name}", file_bytes)
+                                    total_file_size += len(file_bytes)
+
+                        processed_dois.append(doi)
+
+                        if total_file_size > MAX_BUNDLE_SIZE:
+                            raise HTTPException(413, 'Bundle exceeds 2GB limit')
+
+                    except Exception as e:
+                        logger.error(f"Error processing {catalog_record.record_id}: {str(e)}")
+                        failed_records.append({'doi': catalog_record.record_id, 'reason': 'internal_error'})
+
+        file_size = os.path.getsize(temp_zip_path)
+
+        try:
+            log_bundle_download_audit(
+                record_ids,
+                processed_dois,
+                user_data,
+                file_size,
+                failed_records,
+                client_ip,
+                user_agent,
+                catalog_url,
+            )
+        except Exception as e:
+            logger.error(f"Failed to log audit: {str(e)}")
+
+        return temp_zip_path, {
+            'total_size': file_size,
+            'record_count': len(processed_dois),
+            'failed_count': len(failed_records),
+            'processed': processed_dois,
+            'failed': failed_records
+        }
+    except Exception as e:
+        if os.path.exists(temp_zip_path):
+            try:
+                os.remove(temp_zip_path)
+            except Exception as rm_e:
+                logger.error(f"Could not remove temp file {temp_zip_path} during error cleanup: {rm_e}")
+        raise e
 
 
 def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_records, client_ip, user_agent, catalog_url=None):

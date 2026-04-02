@@ -8,7 +8,9 @@ from typing import Any, Optional, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from starlette.background import BackgroundTask
+import os
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import BaseModel, Field, Json
@@ -479,7 +481,7 @@ async def records_subset(
 
 @router.post(
     '/generate-zip-bundle',
-    response_class=StreamingResponse,
+    response_class=FileResponse,
     summary='Generate server-side ZIP bundle',
     description='Generate a server-side ZIP file containing metadata PDFs and data files for selected records',
     status_code=200,
@@ -517,7 +519,7 @@ def generate_zip_bundle(
         # Delegate to library function for ZIP generation
         from odp.lib.bundle_generator import create_zip_bundle
 
-        zip_bytes, metadata = create_zip_bundle(
+        temp_zip_path, metadata = create_zip_bundle(
             record_ids=record_ids,
             user_data=user_data.dict(),
             client_ip=client_ip,
@@ -525,13 +527,15 @@ def generate_zip_bundle(
             catalog_url=config.ODP.API_URL,
         )
 
-        # Return streaming response with metadata headers
-        return StreamingResponse(
-            iter([zip_bytes]),
+        background_task = BackgroundTask(os.remove, temp_zip_path)
+
+        # Return file response with metadata headers and async cleanup
+        return FileResponse(
+            temp_zip_path,
             media_type='application/zip',
+            filename="records.zip",
+            background=background_task,
             headers={
-                'Content-Disposition': 'attachment; filename="records.zip"',
-                'Content-Length': str(len(zip_bytes)),
                 'X-Bundle-Record-Count': str(metadata['record_count']),
                 'X-Bundle-Failed-Count': str(metadata['failed_count']),
             }
