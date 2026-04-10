@@ -11,7 +11,7 @@ from starlette.status import HTTP_404_NOT_FOUND
 from odp.api.lib.auth import Authorize, Authorized
 from odp.api.lib.nextcloud import upload_file_to_nextcloud, delete_folder_from_nextcloud
 from odp.api.lib.paging import Paginator
-from odp.api.lib.record import create_record
+from odp.api.lib.record import create_new_record
 from odp.api.lib.schema import get_metadata_schema
 from odp.api.lib.utils import remove_empty_elements
 from odp.api.models import (
@@ -246,7 +246,6 @@ async def admin_get_submission(
 @router.put(
     '/admin/{submission_id}',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
-<<<<<<< HEAD
 )
 async def admin_update_submission(
         submission_id: int,
@@ -269,30 +268,6 @@ async def admin_update_submission(
     '/admin/{submission_id}',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
 )
-=======
-)
-async def admin_update_submission(
-        submission_id: int,
-        submission_in: SubmissionModelIn,
-):
-    if not (submission := Session.get(Submission, submission_id)):
-        raise HTTPException(HTTP_404_NOT_FOUND)
-
-    submission.data = submission_in.data
-    submission.status = submission_in.status if submission_in.status else submission.status
-    submission.collection_id = submission_in.collection_id if submission_in.collection_id else submission.collection_id
-    submission.schema_id = submission_in.schema_id if submission_in.schema_id else submission.schema_id
-
-    submission.save()
-
-    return submission
-
-
-@router.delete(
-    '/{submission_id}',
-    dependencies=[Depends(Authorize(ODPScope.SUBMISSION_ADMIN))],
-)
->>>>>>> 9b18e6c (Added scopes to routes and re-order them)
 async def admin_delete_submission(
         submission_id: int,
 ):
@@ -341,7 +316,7 @@ async def accept_submission(
 
     datacite_schema = await get_metadata_schema(record_in)
 
-    created_record = create_record(record_in, datacite_schema, auth)
+    created_record = create_new_record(record_in, datacite_schema, auth)
 
     submission.record_id = created_record.id
     submission.status = SubmissionStatus.accepted
