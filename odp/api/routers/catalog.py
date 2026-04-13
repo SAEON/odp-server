@@ -511,10 +511,18 @@ def generate_zip_bundle(
     - X-Bundle-Failed-Count: Number of failed records
     """
     try:
-        # Extract user data and request metadata
 
         client_ip = request.client.host if request.client else None
         user_agent = request.headers.get('user-agent')
+
+        # Derive catalog base URL from the browser's Referer header
+        from urllib.parse import urlparse
+        referer = request.headers.get('referer', '')
+        if referer:
+            parsed = urlparse(referer)
+            catalog_url = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            catalog_url = config.ODP.API_URL
 
         # Delegate to library function for ZIP generation
         from odp.lib.bundle_generator import create_zip_bundle
@@ -524,7 +532,7 @@ def generate_zip_bundle(
             user_data=user_data.dict(),
             client_ip=client_ip,
             user_agent=user_agent,
-            catalog_url=config.ODP.API_URL,
+            catalog_url=catalog_url,
         )
 
         background_task = BackgroundTask(os.remove, temp_zip_path)
