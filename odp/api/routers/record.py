@@ -11,7 +11,7 @@ from starlette.status import HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_409_CO
 
 from odp.api.lib.auth import Authorize, Authorized, TagAuthorize, UntagAuthorize
 from odp.api.lib.paging import Page, Paginator
-from odp.api.lib.record import create_record, set_record, output_record_model, create_tag_audit_record, touch_parent, \
+from odp.api.lib.record import create_new_record, set_record, output_record_model, create_tag_audit_record, touch_parent, \
     delete_record_, untag_record_
 from odp.api.lib.schema import get_metadata_schema, get_tag_schema
 from odp.api.lib.utils import output_published_record_model, output_tag_instance_model
@@ -176,7 +176,7 @@ async def create_record(
         metadata_schema: JSONSchema = Depends(get_metadata_schema),
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_WRITE)),
 ):
-    return create_record(record_in, metadata_schema, auth)
+    return create_new_record(record_in, metadata_schema, auth)
 
 
 @router.post(
@@ -188,7 +188,7 @@ async def admin_create_record(
         metadata_schema: JSONSchema = Depends(get_metadata_schema),
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_ADMIN)),
 ):
-    return create_record(record_in, metadata_schema, auth, True)
+    return create_new_record(record_in, metadata_schema, auth, True)
 
 
 @router.put(

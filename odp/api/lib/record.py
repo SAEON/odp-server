@@ -23,7 +23,7 @@ from odp.db.models import (
 )
 
 
-def create_record(
+def create_new_record(
         record_in: RecordModelIn,
         metadata_schema: JSONSchema,
         auth: Authorized,
