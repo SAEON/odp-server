@@ -175,7 +175,7 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
             [
                 Paragraph("Authors", label_style),
                 Paragraph(
-                    f"{metadata.creator.name}<br/>{metadata.creator.affiliation}, email: {metadata.creator.email}",
+                    f"{metadata.creator.name}<br/>{metadata.creator.affiliation}",
                     value_style,
                 ),
             ],
@@ -198,7 +198,7 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
                 Paragraph(metadata.abstract, value_style),
             ],
             [
-                Paragraph("Data", label_style),
+                Paragraph("Licence", label_style),
                 Paragraph(metadata.license.to_html(), value_style),
             ],
             [

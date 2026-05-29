@@ -113,6 +113,16 @@ class DataCiteAdapter(MetadataAdapter):
             keywords = [keywords]
         keywords = [k for k in keywords if k]
 
+        # Extract temporal extent from dates[].dateType == 'Valid'
+        temporal = TemporalExtent()
+        for date_obj in metadata.get("dates", []):
+            if date_obj.get("dateType") == "Valid":
+                if date_text := date_obj.get("date"):
+                    parts = date_text.split("/")
+                    temporal.start_date = parts[0].split("T")[0]
+                    temporal.end_date = parts[1].split("T")[0] if len(parts) > 1 else parts[0].split("T")[0]
+                break
+
         return RecordMetadata(
             title=metadata["titles"][0].get("title", "N/A") if metadata.get("titles") else "N/A",
             doi=metadata.get("doi", "N/A"),
@@ -124,7 +134,7 @@ class DataCiteAdapter(MetadataAdapter):
             contact=contact,
             license=license_info,
             geography=geography,
-            temporal=TemporalExtent(),
+            temporal=temporal,
         )
 
 
@@ -167,6 +177,15 @@ class ISO19115Adapter(MetadataAdapter):
                     west=float(box.get("westBoundLongitude", 0)),
                 )
 
+        # Extract temporal extent from extent.temporalElement
+        temporal = TemporalExtent()
+        temporal_element = metadata.get("extent", {}).get("temporalElement", {})
+        if temporal_element:
+            if start := temporal_element.get("startTime", ""):
+                temporal.start_date = start.split("T")[0]
+            if end := temporal_element.get("endTime", ""):
+                temporal.end_date = end.split("T")[0]
+
         return RecordMetadata(
             title=metadata.get("title", "N/A"),
             doi=metadata.get("fileIdentifier", "N/A"),
@@ -178,7 +197,7 @@ class ISO19115Adapter(MetadataAdapter):
             contact=contact,
             license=license_info,
             geography=geography,
-            temporal=TemporalExtent(),
+            temporal=temporal,
         )
 
 

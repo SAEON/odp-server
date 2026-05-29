@@ -129,7 +129,7 @@ def create_zip_bundle(
                             pdf_buffer = generate_pdf(record_metadata)
                             pdf_content = pdf_buffer.getvalue()
 
-                            zip_file.writestr(f"{folder_name}/metadata.pdf", pdf_content)
+                            zip_file.writestr(f"{folder_name}/Metadata.pdf", pdf_content)
                             total_file_size += len(pdf_content)
                         except Exception as e:
                             logger.error(f"PDF generation failed for {catalog_record.record_id}: {str(e)}")
