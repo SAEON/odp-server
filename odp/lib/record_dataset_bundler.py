@@ -16,6 +16,7 @@ import requests
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from odp.api.models import BundledRecordDataset
 from odp.db import Session
 from odp.db.models import CatalogRecord, DownloadAudit
 from odp.lib.metadata_adapters import adapt_metadata
@@ -80,14 +81,14 @@ def _ensure_extension(file_name: str, download_url: str, content_type: str) -> s
     return file_name + ext if ext else file_name
 
 
-def create_zip_bundle(
+def bundle_catalog_records(
         record_ids: List[str],
         user_data: Dict[str, str],
         client_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
         catalog_url: Optional[str] = None,
-) -> Tuple[str, Dict[str, Any]]:
-    """Generates ZIP bundle with metadata PDFs and data files using bulk database fetching."""
+) -> BundledRecordDataset:
+    """Generates a ZIP bundle of metadata PDFs and data files for the given catalog record IDs."""
 
     if not record_ids:
         raise ValueError("record_ids cannot be empty")
@@ -190,13 +191,14 @@ def create_zip_bundle(
         except Exception as e:
             logger.error(f"Failed to log audit: {str(e)}")
 
-        return temp_zip_path, {
-            'total_size': file_size,
-            'record_count': len(processed_dois),
-            'failed_count': len(failed_records),
-            'processed': processed_dois,
-            'failed': failed_records
-        }
+        return BundledRecordDataset(
+            zip_path=temp_zip_path,
+            total_size=file_size,
+            record_count=len(processed_dois),
+            failed_count=len(failed_records),
+            processed=processed_dois,
+            failed=failed_records,
+        )
     except Exception as e:
         if os.path.exists(temp_zip_path):
             try:
@@ -224,16 +226,13 @@ def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_rec
     if catalog_url:
         audit_meta['catalog_url'] = catalog_url
 
-    with Session() as session:
-        audit = DownloadAudit(
-            client_id='odp-server-zip-generator',
-            download_url='/catalog/generate-zip-bundle',
-            ip_address=client_ip,
-            user_agent=user_agent,
-            file_size=file_size,
-            success=True,
-            timestamp=datetime.now(timezone.utc),
-            meta=audit_meta
-        )
-        session.add(audit)
-        session.commit()
+    DownloadAudit(
+        client_id='odp-server-zip-generator',
+        download_url='/catalog/generate-zip-bundle',
+        ip_address=client_ip,
+        user_agent=user_agent,
+        file_size=file_size,
+        success=True,
+        timestamp=datetime.now(timezone.utc),
+        meta=audit_meta,
+    ).save()

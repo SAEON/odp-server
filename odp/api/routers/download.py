@@ -7,7 +7,6 @@ from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.auth import Authorize, Authorized
 from odp.api.models import DownloadAuditModel, DownloadAuditResponse, DownloadStatsModel
 from odp.const import ODPScope
-from odp.db import Session
 from odp.db.models import DownloadAudit
 from odp.lib import download_service
 
@@ -24,26 +23,24 @@ async def create_download_audit(request: Request):
     if not isinstance(payload, dict):
         raise HTTPException(HTTP_400_BAD_REQUEST, 'Invalid JSON payload')
 
-    with Session() as session:
-        meta = payload.get('meta', {}) or {}
-        for k in ('name', 'email', 'organisation', 'doi', 'record_id', 'catalog_url'):
-            if payload.get(k) is not None:
-                meta[k] = payload.get(k)
+    meta = payload.get('meta', {}) or {}
+    for k in ('name', 'email', 'organisation', 'doi', 'record_id', 'catalog_url'):
+        if payload.get(k) is not None:
+            meta[k] = payload.get(k)
 
-        audit = DownloadAudit(
-            client_id=payload.get('client_id') or 'unknown',
-            user_id=payload.get('user_id'),
-            download_url=payload.get('download_url'),
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get('user-agent'),
-            file_size=payload.get('file_size'),
-            success=bool(payload.get('success', True)),
-            timestamp=datetime.now(timezone.utc),
-            meta=meta,
-        )
-        session.add(audit)
-        session.commit()
-        return {"status": "ok", "audit_id": audit.id}
+    audit = DownloadAudit(
+        client_id=payload.get('client_id') or 'unknown',
+        user_id=payload.get('user_id'),
+        download_url=payload.get('download_url'),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('user-agent'),
+        file_size=payload.get('file_size'),
+        success=bool(payload.get('success', True)),
+        timestamp=datetime.now(timezone.utc),
+        meta=meta,
+    )
+    audit.save()
+    return {"status": "ok", "audit_id": audit.id}
 
 
 @router.get('/logs',

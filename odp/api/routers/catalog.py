@@ -30,6 +30,7 @@ from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
 from odp.lib.datacite import DataciteClient, DataciteError
+from odp.lib.record_dataset_bundler import bundle_catalog_records
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -524,10 +525,7 @@ def generate_zip_bundle(
         else:
             catalog_url = config.ODP.API_URL
 
-        # Delegate to library function for ZIP generation
-        from odp.lib.bundle_generator import create_zip_bundle
-
-        temp_zip_path, metadata = create_zip_bundle(
+        result = bundle_catalog_records(
             record_ids=record_ids,
             user_data=user_data.dict(),
             client_ip=client_ip,
@@ -535,17 +533,16 @@ def generate_zip_bundle(
             catalog_url=catalog_url,
         )
 
-        background_task = BackgroundTask(os.remove, temp_zip_path)
+        background_task = BackgroundTask(os.remove, result.zip_path)
 
-        # Return file response with metadata headers and async cleanup
         return FileResponse(
-            temp_zip_path,
+            result.zip_path,
             media_type='application/zip',
             filename="records.zip",
             background=background_task,
             headers={
-                'X-Bundle-Record-Count': str(metadata['record_count']),
-                'X-Bundle-Failed-Count': str(metadata['failed_count']),
+                'X-Bundle-Record-Count': str(result.record_count),
+                'X-Bundle-Failed-Count': str(result.failed_count),
             }
         )
 
