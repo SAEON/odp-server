@@ -160,6 +160,14 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
         )
 
         # Build table rows with extracted data
+        creator_text = f"{metadata.creator.name}<br/>{metadata.creator.affiliation}"
+        if metadata.creator.email and metadata.creator.email != "N/A":
+            creator_text += f"<br/>{metadata.creator.email}"
+
+        contact_text = f"Contact Person: {metadata.contact.name}<br/>{metadata.contact.affiliation}"
+        if metadata.contact.email and metadata.contact.email != "N/A":
+            contact_text += f"<br/>email: {metadata.contact.email}"
+
         rows = [
             [
                 Paragraph("Title", label_style),
@@ -174,10 +182,7 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
             ],
             [
                 Paragraph("Authors", label_style),
-                Paragraph(
-                    f"{metadata.creator.name}<br/>{metadata.creator.affiliation}",
-                    value_style,
-                ),
+                Paragraph(creator_text, value_style),
             ],
             [
                 Paragraph("Publisher", label_style),
@@ -188,10 +193,7 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
             ],
             [
                 Paragraph("Contributors", label_style),
-                Paragraph(
-                    f"Contact Person: {metadata.contact.name}<br/>{metadata.contact.affiliation},<br/>email: {metadata.contact.email}",
-                    value_style,
-                ),
+                Paragraph(contact_text, value_style),
             ],
             [
                 Paragraph("Abstract", label_style),
