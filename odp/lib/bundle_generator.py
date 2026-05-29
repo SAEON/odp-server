@@ -3,11 +3,13 @@ Server-side ZIP bundle generation with metadata PDFs and data files.
 """
 
 import logging
-import re
-from datetime import datetime, timezone
+import mimetypes
 import os
+import re
 import tempfile
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 from zipfile import ZipFile, ZIP_DEFLATED
 
 import requests
@@ -39,24 +41,43 @@ def create_safe_folder_name(title: str, max_length: int = 200) -> str:
     return sanitized or 'Untitled'
 
 
-def fetch_external_file(url: str, timeout: int = 30) -> Optional[bytes]:
-    """Download a file with logging for HTTP failures."""
+def fetch_external_file(url: str, timeout: int = 30) -> Tuple[Optional[bytes], Optional[str]]:
+    """Download a file and return (bytes, content_type). Both None on failure."""
     if not url:
-        return None
+        return None, None
     try:
         response = requests.get(url + '/download', timeout=timeout, stream=True)
         if not response.ok:
             logger.warning(f"Download failed (HTTP {response.status_code}): {url}")
-            return None
+            return None, None
 
+        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
         file_bytes = b''
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
                 file_bytes += chunk
-        return file_bytes or None
+        return (file_bytes or None), content_type
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
-        return None
+        return None, None
+
+
+def _ensure_extension(file_name: str, download_url: str, content_type: str) -> str:
+    """Append a file extension if file_name has none, using URL path or Content-Type."""
+    if os.path.splitext(file_name)[1]:
+        return file_name
+
+    # Try extension from URL path
+    url_path = urlparse(download_url).path
+    ext = os.path.splitext(url_path)[1]
+
+    # Fall back to Content-Type
+    if not ext and content_type:
+        ext = mimetypes.guess_extension(content_type) or ''
+        # mimetypes can return platform-specific oddities; normalise common ones
+        ext = {'.jpe': '.jpg', '.jpeg': '.jpg'}.get(ext, ext)
+
+    return file_name + ext if ext else file_name
 
 
 def create_zip_bundle(
@@ -138,8 +159,9 @@ def create_zip_bundle(
                             download_url = resource['resourceDownload'].get('downloadURL')
                             file_name = resource['resourceDownload'].get('fileName', 'data_file')
                             if download_url:
-                                file_bytes = fetch_external_file(download_url)
+                                file_bytes, content_type = fetch_external_file(download_url)
                                 if file_bytes:
+                                    file_name = _ensure_extension(file_name, download_url, content_type)
                                     zip_file.writestr(f"{folder_name}/{file_name}", file_bytes)
                                     total_file_size += len(file_bytes)
 
