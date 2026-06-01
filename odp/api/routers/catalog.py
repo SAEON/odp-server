@@ -1,16 +1,17 @@
 import logging
+import os
 import re
 from datetime import date
 from enum import Enum
 from functools import partial
 from math import ceil
 from typing import Any, Optional, List
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from starlette.background import BackgroundTask
-import os
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import BaseModel, Field, Json
@@ -517,7 +518,6 @@ def generate_zip_bundle(
         user_agent = request.headers.get('user-agent')
 
         # Derive catalog base URL from the browser's Referer header
-        from urllib.parse import urlparse
         referer = request.headers.get('referer', '')
         if referer:
             parsed = urlparse(referer)

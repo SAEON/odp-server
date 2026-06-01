@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from odp.api.models import BundledRecordDataset
+from odp.const import ODPCatalog
 from odp.db import Session
 from odp.db.models import CatalogRecord, DownloadAudit
 from odp.lib.metadata_adapters import adapt_metadata
@@ -109,9 +110,9 @@ def bundle_catalog_records(
         with Session() as session:
             stmt = (
                 select(CatalogRecord)
-                .where(CatalogRecord.published == True)
+                .where(CatalogRecord.published.is_(True))
                 .where(CatalogRecord.record_id.in_(record_ids))
-                .where(CatalogRecord.catalog_id == 'DataCite')
+                .where(CatalogRecord.catalog_id == ODPCatalog.DATACITE)
             )
             catalog_records = session.execute(stmt).scalars().all()
 
