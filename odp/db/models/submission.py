@@ -8,8 +8,7 @@ from odp.db import Base
 
 
 class Submission(Base):
-    """Represents a public catalog providing access to published
-    digital object records."""
+    """Represents a data submission by a user."""
 
     __tablename__ = 'submission'
 
