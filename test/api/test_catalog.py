@@ -12,7 +12,7 @@ from odp.catalog.saeon import SAEONCatalog
 from odp.const import ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, Tag
-from test import datacite4_example, isequal, iso19115_example, ris_example
+from test import datacite4_example, isequal, eml_example, iso19115_example, ris_example
 from test.api import assert_forbidden, assert_new_timestamp, assert_not_found, assert_redirect
 from test.factories import CatalogFactory, CollectionTagFactory, RecordFactory, RecordTagFactory
 
@@ -209,12 +209,14 @@ def test_redirect_to(
 schema_uris = {
     'SAEON.DataCite4': 'https://odp.saeon.ac.za/schema/metadata/saeon/datacite4',
     'SAEON.ISO19115': 'https://odp.saeon.ac.za/schema/metadata/saeon/iso19115',
+    'SAEON.EML': 'https://odp.saeon.ac.za/schema/metadata/saeon/eml',
     'SchemaOrg.Dataset': 'https://odp.saeon.ac.za/schema/metadata/schema.org/dataset',
     'RIS.Citation': 'https://odp.saeon.ac.za/schema/metadata/ris/citation'
 }
 metadata_examples = {
     'SAEON.DataCite4': datacite4_example(),
     'SAEON.ISO19115': iso19115_example(),
+    'SAEON.EML': eml_example(),
     'SchemaOrg.Dataset': {
         '@context': 'https://schema.org/',
         '@type': 'Dataset',
@@ -358,16 +360,20 @@ def test_get_published_record(
 
     has_datacite = True
     has_iso19115 = example_record.schema_id == 'SAEON.ISO19115'
+    has_eml = example_record.schema_id == 'SAEON.EML'
     has_jsonld = catalog_id == 'MIMS'
     has_ris = catalog_id == 'MIMS'
 
-    assert len(result['metadata_records']) == has_datacite + has_iso19115 + has_jsonld + has_ris
+    assert len(result['metadata_records']) == has_datacite + has_iso19115  + has_eml + has_jsonld + has_ris
 
     if has_datacite:
         assert_metadata_record('SAEON.DataCite4')
 
     if has_iso19115:
         assert_metadata_record('SAEON.ISO19115')
+
+    if has_eml:
+        assert_metadata_record('SAEON.EML')
 
     if has_jsonld:
         assert_metadata_record('SchemaOrg.Dataset')
@@ -421,7 +427,7 @@ def test_get_published_metadata_value(
     assert r.json() == expected_value
 
 
-@pytest.mark.parametrize('schema_id', ['SAEON.DataCite4', 'SAEON.ISO19115'])
+@pytest.mark.parametrize('schema_id', ['SAEON.DataCite4', 'SAEON.ISO19115', 'SAEON.EML'])
 @pytest.mark.require_scope(ODPScope.CATALOG_READ)
 def test_get_published_metadata_document(
         api, scopes,
