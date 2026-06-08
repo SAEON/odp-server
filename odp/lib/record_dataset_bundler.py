@@ -8,7 +8,7 @@ import os
 import re
 import tempfile
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from zipfile import ZipFile, ZIP_DEFLATED
 

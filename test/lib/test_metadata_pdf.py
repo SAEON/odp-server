@@ -28,7 +28,6 @@ from odp.lib.pdf_generator import (
 from odp.lib.metadata_adapters import (
     DataCiteAdapter,
     ISO19115Adapter,
-    AutoDetectAdapter,
     adapt_metadata,
 )
 
@@ -646,43 +645,24 @@ class TestISO19115Adapter:
 # ============================================================================
 
 class TestAutoDetectAdapter:
-    """Test suite for auto-detection adapter."""
+    """Test suite for adapt_metadata auto-detection."""
 
     def test_auto_detect_datacite(self, complete_datacite_metadata):
-        """Test auto-detection of DataCite format."""
-        adapter = AutoDetectAdapter()
-        result = adapter.adapt(complete_datacite_metadata)
-
+        result = adapt_metadata(complete_datacite_metadata)
         assert result.title == "Marine Dataset: Ocean Temperature"
         assert result.doi == "10.15493/marine"
 
     def test_auto_detect_iso19115(self, complete_iso19115_metadata):
-        """Test auto-detection of ISO19115 format."""
-        adapter = AutoDetectAdapter()
-        result = adapter.adapt(complete_iso19115_metadata)
-
+        result = adapt_metadata(complete_iso19115_metadata)
         assert result.title == "Marine Data: ISO Format"
 
     def test_auto_detect_invalid_format(self):
-        """Test auto-detection with unrecognized format."""
-        metadata = {"unknown": "format", "fields": "here"}
-
-        adapter = AutoDetectAdapter()
-        with pytest.raises(ValueError, match="Could not detect metadata schema"):
-            adapter.adapt(metadata)
+        with pytest.raises(ValueError, match="Could not detect or adapt metadata schema"):
+            adapt_metadata({"unknown": "format", "fields": "here"})
 
     def test_auto_detect_empty_metadata(self):
-        """Test auto-detection with empty metadata."""
-        adapter = AutoDetectAdapter()
         with pytest.raises(ValueError):
-            adapter.adapt({})
-
-    def test_auto_detect_always_can_handle(self, complete_datacite_metadata):
-        """Test that auto-detect always claims to handle metadata."""
-        adapter = AutoDetectAdapter()
-        assert adapter.can_handle(complete_datacite_metadata) is True
-        assert adapter.can_handle({}) is True
-        assert adapter.can_handle(None) is True
+            adapt_metadata({})
 
 
 # ============================================================================

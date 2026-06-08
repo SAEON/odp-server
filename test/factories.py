@@ -1,7 +1,6 @@
 import re
-import sys
 from datetime import datetime, timezone
-from random import choice, choices, randint
+from random import choice, randint
 
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
@@ -14,6 +13,7 @@ from odp.db.models import (
     Client,
     Collection,
     CollectionTag,
+    DownloadAudit,
     Provider,
     Record,
     RecordTag,
@@ -25,10 +25,9 @@ from odp.db.models import (
     User,
     Vocabulary,
 )
-from test import datacite4_example, iso19115_example, eml_example
+from test import datacite4_example, iso19115_example
 
 from odp.const.db import SubmissionStatus
-from odp.db import Session
 
 FactorySession = scoped_session(sessionmaker(
     bind=odp.db.engine,
@@ -67,7 +66,7 @@ def create_metadata(record_or_package, n):
             metadata = datacite4_example()
         elif record_or_package.schema_id == 'SAEON.ISO19115':
             metadata = iso19115_example()
-        elif record.schema_id == 'SAEON.EML':
+        elif record_or_package.schema_id == 'SAEON.EML':
             metadata = iso19115_example()
     else:
         metadata = {'foo': f'test-{n}'}
@@ -361,6 +360,25 @@ class RoleFactory(ODPModelFactory):
                 obj.collections.append(collection)
             if create:
                 FactorySession.commit()
+
+
+class DownloadAuditFactory(ODPModelFactory):
+    class Meta:
+        model = DownloadAudit
+
+    client_id = factory.Sequence(lambda n: f'test.client.{n}')
+    user_id = factory.Faker('uuid4')
+    download_url = factory.Faker('url')
+    ip_address = factory.Faker('ipv4')
+    user_agent = factory.Faker('user_agent')
+    file_size = factory.LazyFunction(lambda: randint(1024, 10_000_000))
+    success = factory.LazyFunction(lambda: bool(randint(0, 1)))
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    meta = factory.LazyFunction(lambda: {
+        'name': fake.name(),
+        'email': fake.email(),
+        'organisation': fake.company(),
+    })
 
 
 class SubmissionFactory(ODPModelFactory):

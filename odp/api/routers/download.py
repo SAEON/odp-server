@@ -3,8 +3,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request, Depends
 from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST
-from odp.api.lib.paging import Page, Paginator
-from odp.api.lib.auth import Authorize, Authorized
+from odp.api.lib.paging import Page
+from odp.api.lib.auth import Authorize
 from odp.api.models import DownloadAuditModel, DownloadAuditResponse, DownloadStatsModel
 from odp.const import ODPScope
 from odp.db.models import DownloadAudit
