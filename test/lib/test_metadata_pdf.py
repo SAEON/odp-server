@@ -30,8 +30,6 @@ from odp.lib.metadata_adapters import (
     ISO19115Adapter,
     adapt_metadata,
 )
-
-
 # ============================================================================
 # Test Fixtures - Common test data
 # ============================================================================
