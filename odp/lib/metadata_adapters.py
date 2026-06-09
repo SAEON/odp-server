@@ -95,10 +95,11 @@ class DataCiteAdapter(MetadataAdapter):
             license_info.uri = rights.get("rightsURI", "")
 
         # Extract geography
-        geography = GeographicExtent(north=0, south=0, east=0, west=0)
+        geography = None
         if metadata.get("geoLocations"):
             box = metadata["geoLocations"][0].get("geoLocationBox")
-            if box:
+            coord_keys = {"northBoundLatitude", "southBoundLatitude", "eastBoundLongitude", "westBoundLongitude"}
+            if box and coord_keys.intersection(box.keys()):
                 geography = GeographicExtent(
                     north=float(box.get("northBoundLatitude", 0)),
                     south=float(box.get("southBoundLatitude", 0)),
@@ -211,19 +212,40 @@ def _normalise_keywords(keywords):
 def adapt_metadata(
         raw_metadata: Dict[str, Any],
         schema_id: Optional[str] = None,
+        fallback: bool = True,
 ) -> RecordMetadata:
     """
     Factory function to adapt metadata from various schemas.
-    This replaces the AutoDetectAdapter class to maintain clean separation.
+
+    If schema_id is recognised, that adapter is tried first. When fallback=True
+    and the explicit adapter fails (or schema_id is unknown), auto-detection is
+    attempted. When fallback=False, any failure raises ValueError immediately.
     """
-    # 1. Direct Mapping
-    if schema_id in ("SAEON.DataCite4", "datacite4"):
-        return DataCiteAdapter().adapt(raw_metadata)
+    known = {
+        "SAEON.DataCite4": DataCiteAdapter,
+        "datacite4": DataCiteAdapter,
+        "SAEON.ISO19115": ISO19115Adapter,
+        "iso19115": ISO19115Adapter,
+    }
 
-    if schema_id in ("SAEON.ISO19115", "iso19115"):
-        return ISO19115Adapter().adapt(raw_metadata)
+    if schema_id is not None and schema_id not in known:
+        if not fallback:
+            raise ValueError(f"Unknown schema_id: {schema_id!r}")
+        # fall through to auto-detection below
+    elif schema_id in known:
+        adapter = known[schema_id]()
+        if adapter.can_handle(raw_metadata):
+            try:
+                return adapter.adapt(raw_metadata)
+            except Exception:
+                if not fallback:
+                    raise ValueError(f"Could not adapt metadata with schema {schema_id!r}.")
+        else:
+            if not fallback:
+                raise ValueError(f"Could not adapt metadata with schema {schema_id!r}.")
+            # fall through to auto-detection
 
-    # 2. Auto-detection
+    # Auto-detection
     adapters = [DataCiteAdapter(), ISO19115Adapter()]
     for adapter in adapters:
         if adapter.can_handle(raw_metadata):

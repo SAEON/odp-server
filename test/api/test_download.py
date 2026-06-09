@@ -18,18 +18,14 @@ from test.api import assert_forbidden
 from test.factories import DownloadAuditFactory
 
 
-# ============================================================================
 # Fixtures
-# ============================================================================
 
 @pytest.fixture
 def download_batch():
     return [DownloadAuditFactory() for _ in range(randint(3, 5))]
 
 
-# ============================================================================
 # POST /audit
-# ============================================================================
 
 def test_create_audit_minimal(api):
     payload = {
@@ -71,9 +67,7 @@ def test_create_audit_invalid_payload(api):
     assert r.status_code == 400
 
 
-# ============================================================================
 # GET /logs
-# ============================================================================
 
 @pytest.mark.require_scope(ODPScope.CATALOG_READ)
 def test_get_logs(api, download_batch, scopes):
@@ -115,9 +109,7 @@ def test_get_logs_empty(api, scopes):
         assert_forbidden(r)
 
 
-# ============================================================================
 # GET /stats
-# ============================================================================
 
 @pytest.mark.require_scope(ODPScope.CATALOG_READ)
 def test_get_stats(api, download_batch, scopes):
@@ -155,9 +147,7 @@ def test_get_stats_invalid_date(api, scopes):
         assert_forbidden(r)
 
 
-# ============================================================================
 # GET /export/csv
-# ============================================================================
 
 @pytest.mark.require_scope(ODPScope.CATALOG_READ)
 def test_export_csv(api, download_batch, scopes):

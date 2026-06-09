@@ -30,9 +30,7 @@ from odp.lib.metadata_adapters import (
     ISO19115Adapter,
     adapt_metadata,
 )
-# ============================================================================
 # Test Fixtures - Common test data
-# ============================================================================
 
 @pytest.fixture
 def complete_datacite_metadata():
@@ -178,9 +176,7 @@ def record_metadata():
     )
 
 
-# ============================================================================
 # Tests for PDF Generation
-# ============================================================================
 
 class TestPDFGeneration:
     """Test suite for PDF generation functionality."""
@@ -303,9 +299,7 @@ class TestPDFGeneration:
             generate_pdf(None)
 
 
-# ============================================================================
 # Tests for DataCite Adapter
-# ============================================================================
 
 class TestDataCiteAdapter:
     """Test suite for DataCite4 metadata adapter."""
@@ -481,9 +475,7 @@ class TestDataCiteAdapter:
         assert result.publication_year == "not-a-year"
 
 
-# ============================================================================
 # Tests for ISO19115 Adapter
-# ============================================================================
 
 class TestISO19115Adapter:
     """Test suite for ISO19115 metadata adapter."""
@@ -638,9 +630,7 @@ class TestISO19115Adapter:
         assert result.geography.south == -15.0
 
 
-# ============================================================================
 # Tests for Auto-Detection Adapter
-# ============================================================================
 
 class TestAutoDetectAdapter:
     """Test suite for adapt_metadata auto-detection."""
@@ -663,9 +653,7 @@ class TestAutoDetectAdapter:
             adapt_metadata({})
 
 
-# ============================================================================
 # Tests for Factory Function
-# ============================================================================
 
 class TestAdaptMetadataFactory:
     """Test suite for adapt_metadata factory function."""
@@ -740,9 +728,7 @@ class TestAdaptMetadataFactory:
             adapt_metadata(iso_data, schema_id="SAEON.DataCite4", fallback=False)
 
 
-# ============================================================================
 # Tests for Data Classes
-# ============================================================================
 
 class TestDataClasses:
     """Test suite for data classes."""
@@ -810,7 +796,7 @@ class TestDataClasses:
         assert isinstance(metadata.creator, PersonInfo)
         assert isinstance(metadata.contact, PersonInfo)
         assert isinstance(metadata.license, License)
-        assert isinstance(metadata.geography, GeographicExtent)
+        assert metadata.geography is None
         assert isinstance(metadata.temporal, TemporalExtent)
 
     def test_record_metadata_explicit_values(self):
@@ -831,9 +817,7 @@ class TestDataClasses:
         assert metadata.creator is creator
 
 
-# ============================================================================
 # Integration Tests
-# ============================================================================
 
 class TestIntegration:
     """Integration tests for the full PDF generation pipeline."""
@@ -891,9 +875,7 @@ class TestIntegration:
         assert iso_result.title and iso_result.doi
 
 
-# ============================================================================
 # Edge Cases and Error Scenarios
-# ============================================================================
 
 class TestEdgeCases:
     """Test edge cases and error scenarios."""

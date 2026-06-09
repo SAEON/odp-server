@@ -91,10 +91,6 @@ class RecordMetadata:
             self.contact = PersonInfo()
         if self.license is None:
             self.license = License()
-        if self.geography is None:
-            self.geography = GeographicExtent(
-                north=0.0, south=0.0, east=0.0, west=0.0
-            )
         if self.temporal is None:
             self.temporal = TemporalExtent()
 
@@ -209,7 +205,7 @@ def generate_pdf(metadata: RecordMetadata) -> BytesIO:
             ],
             [
                 Paragraph("Geographic extent", label_style),
-                Paragraph(str(metadata.geography).replace("\n", "<br/>"), value_style),
+                Paragraph(str(metadata.geography).replace("\n", "<br/>") if metadata.geography else "N/A", value_style),
             ],
             [
                 Paragraph("Keywords", label_style),
