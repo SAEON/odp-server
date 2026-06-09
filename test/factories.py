@@ -9,7 +9,7 @@ from faker import Faker
 from odp.db import Session
 from odp.db.models import (Catalog, Client, Collection, CollectionTag, Provider, Record, RecordTag, Role, Schema, Scope, Tag, User,
                            Vocabulary, VocabularyTerm)
-from test import datacite4_example, iso19115_example
+from test import datacite4_example, iso19115_example, eml_example
 
 fake = Faker()
 
@@ -35,6 +35,8 @@ def create_metadata(record, n):
             metadata = datacite4_example()
         elif record.schema_id == 'SAEON.ISO19115':
             metadata = iso19115_example()
+        elif record.schema_id == 'SAEON.EML':
+            metadata = eml_example()
     else:
         metadata = {'foo': f'test-{n}'}
 
@@ -77,6 +79,7 @@ def schema_uri_from_type(schema):
         return choice((
             'https://odp.saeon.ac.za/schema/metadata/saeon/datacite4',
             'https://odp.saeon.ac.za/schema/metadata/saeon/iso19115',
+            'https://odp.saeon.ac.za/schema/metadata/saeon/eml',
             'https://odp.saeon.ac.za/schema/metadata/datacite/kernel-4.3',
         ))
     elif schema.type == 'tag':

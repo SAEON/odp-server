@@ -455,7 +455,14 @@ def test_get_published_metadata_document(
         assert_forbidden(r)
         return
 
-    expected_document = datacite4_example() if schema_id == 'SAEON.DataCite4' else iso19115_example()
+    expected_documents = {
+        'SAEON.DataCite4': datacite4_example,
+        'SAEON.ISO19115': iso19115_example,
+        'SAEON.EML': eml_example,
+    }
+
+    expected_document = expected_documents[schema_id]()
+
     if example_record.doi:
         expected_document |= dict(doi=example_record.doi)
     else:
