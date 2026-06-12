@@ -58,7 +58,8 @@ def get_download_stats(start_date: Optional[str] = None, end_date: Optional[str]
 
     organisations = Session.query(
         DownloadAudit.meta['organisation'].astext.label('organisation'),
-        func.count(DownloadAudit.id).label('downloads')
+        func.count(DownloadAudit.id).label('downloads'),
+        func.count(func.distinct(DownloadAudit.meta['email'])).label('unique_users')
     ).filter(DownloadAudit.meta['organisation'].isnot(None)) \
         .group_by('organisation').order_by(desc('downloads')).limit(20).all()
 
@@ -104,7 +105,7 @@ def get_download_stats(start_date: Optional[str] = None, end_date: Optional[str]
         successful_downloads=successful_downloads,
         failed_downloads=failed_downloads,
         downloads_by_type={item.type: item.count for item in downloads_by_type if item.type},
-        organisations=[OrganisationStats(name=item.organisation, downloads=item.downloads) for item in organisations],
+        organisations=[OrganisationStats(name=item.organisation, downloads=item.downloads, unique_users=item.unique_users) for item in organisations],
         top_records=[
             TopRecordStats(doi=item.doi, record_id=item.record_id, downloads=item.downloads, unique_users=item.unique_users)
             for item in top_records
