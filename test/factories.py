@@ -1,6 +1,7 @@
 import re
+import sys
 from datetime import datetime, timezone
-from random import choice, randint
+from random import choice, choices, randint
 
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
@@ -8,15 +9,22 @@ from faker import Faker
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 import odp.db
+from odp.const.db import SubmissionStatus
 from odp.db.models import (
+    Archive,
+    ArchiveResource,
     Catalog,
     Client,
     Collection,
     CollectionTag,
     DownloadAudit,
+    Keyword,
+    Package,
+    PackageTag,
     Provider,
     Record,
     RecordTag,
+    Resource,
     Role,
     Schema,
     Scope,
@@ -25,9 +33,7 @@ from odp.db.models import (
     User,
     Vocabulary,
 )
-from test import datacite4_example, iso19115_example
-
-from odp.const.db import SubmissionStatus
+from test import datacite4_example, iso19115_example, eml_example
 
 FactorySession = scoped_session(sessionmaker(
     bind=odp.db.engine,
@@ -106,6 +112,33 @@ def create_metadata(record_or_package, n):
         }]
 
     return metadata
+
+
+def create_package_key(package, n):
+    timestamp = datetime.now(timezone.utc)
+    date = timestamp.strftime('%Y_%m_%d')
+    return f'{package.provider.key}_{date}_{n:03}'
+
+
+def create_keyword_key(kw, n, invalid=False):
+    if kw.vocabulary.schema.uri.endswith('institution'):
+        return -1 if invalid else fake.word() + str(n)
+    elif kw.vocabulary.schema.uri.endswith('sdg'):
+        if kw.parent_id is None:
+            return '' if invalid else str(fake.pyint())
+        return '' if invalid else str(fake.pyfloat(min_value=0))
+
+
+def create_keyword_data(kw, n, invalid=False):
+    data = {'foo': 'bar'} if invalid else {'key': kw.key}
+    if kw.vocabulary.schema.uri.endswith('institution'):
+        data |= {'abbr': fake.word() + str(n)}
+    elif kw.vocabulary.schema.uri.endswith('sdg'):
+        if kw.parent_id is None:
+            data |= {'title': fake.job() + str(n), 'goal': fake.sentence() + str(n)}
+        else:
+            data |= {'target': fake.sentence() + str(n)}
+    return data
 
 
 def schema_uri_from_type(schema):
@@ -204,6 +237,43 @@ class ProviderFactory(ODPModelFactory):
                 FactorySession.commit()
 
 
+class PackageFactory(ODPModelFactory):
+    class Meta:
+        model = Package
+        exclude = ('parent_doi', 'use_example_metadata')
+
+    id = factory.Faker('uuid4')
+    key = factory.LazyAttributeSequence(create_package_key)
+    status = factory.LazyFunction(lambda: choices(('pending', 'submitted', 'archived', 'deleted'), weights=(12, 4, 3, 1))[0])
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    provider = factory.SubFactory(ProviderFactory)
+
+    schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115')))
+    schema_type = 'metadata'
+    schema = factory.LazyAttribute(lambda p: FactorySession.get(Schema, (p.schema_id, 'metadata')) or
+                                             SchemaFactory(id=p.schema_id, type='metadata'))
+    use_example_metadata = False
+    metadata_ = factory.LazyAttributeSequence(create_metadata)
+    validity = factory.LazyAttribute(lambda p: dict(valid=p.use_example_metadata))
+
+
+class ResourceFactory(ODPModelFactory):
+    class Meta:
+        model = Resource
+
+    id = factory.Faker('uuid4')
+    path = factory.Sequence(lambda n: f'{fake.uri(deep=randint(1, 4))}.{n}')
+    mimetype = factory.Faker('mime_type')
+    size = factory.LazyFunction(lambda: randint(1, sys.maxsize))
+    hash = factory.LazyAttribute(lambda r: fake.md5() if r.hash_algorithm == 'md5' else fake.sha256())
+    hash_algorithm = factory.LazyFunction(lambda: choice(('md5', 'sha256')))
+    title = factory.Faker('catch_phrase')
+    description = factory.Faker('sentence')
+    status = factory.LazyFunction(lambda: choices(('active', 'delete_pending'), weights=(9, 1))[0])
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    package = factory.SubFactory(PackageFactory)
+
+
 class CollectionFactory(ODPModelFactory):
     class Meta:
         model = Collection
@@ -245,6 +315,24 @@ class VocabularyFactory(ODPModelFactory):
     uri = factory.Faker('url')
     schema = factory.SubFactory(SchemaFactory, type='keyword')
     static = factory.LazyFunction(lambda: randint(0, 1))
+
+
+class KeywordFactory(ODPModelFactory):
+    class Meta:
+        model = Keyword
+
+    key = factory.LazyAttributeSequence(create_keyword_key)
+    data = factory.LazyAttributeSequence(create_keyword_data)
+    status = factory.LazyFunction(lambda: choices(('proposed', 'approved', 'rejected', 'obsolete'), weights=(3, 14, 1, 2))[0])
+    parent = None
+    parent_id = None
+    vocabulary = factory.SubFactory(VocabularyFactory)
+
+    @factory.post_generation
+    def children(obj, create, _):
+        if create:
+            if not obj.parent_id or not obj.parent.parent_id:
+                KeywordFactory.create_batch(randint(0, 4), parent_id=obj.id, vocabulary=obj.vocabulary)
 
 
 class TagFactory(ODPModelFactory):
@@ -295,6 +383,17 @@ class CollectionTagFactory(ODPModelFactory):
     tag = factory.SubFactory(TagFactory, type='collection')
     user = factory.SubFactory(UserFactory)
     data = {}
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+
+
+class PackageTagFactory(ODPModelFactory):
+    class Meta:
+        model = PackageTag
+
+    package = factory.SubFactory(PackageFactory)
+    tag = factory.SubFactory(TagFactory, type='package')
+    user = factory.SubFactory(UserFactory)
+    data = factory.LazyFunction(lambda: {'foo': fake.word()})
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
 
@@ -362,23 +461,26 @@ class RoleFactory(ODPModelFactory):
                 FactorySession.commit()
 
 
-class DownloadAuditFactory(ODPModelFactory):
+class ArchiveFactory(ODPModelFactory):
     class Meta:
-        model = DownloadAudit
+        model = Archive
 
-    client_id = factory.Sequence(lambda n: f'test.client.{n}')
-    user_id = factory.Faker('uuid4')
+    id = factory.Sequence(lambda n: f'{fake.slug()}.{n}')
+    type = factory.LazyFunction(lambda: choice(('filestore', 'website')))
     download_url = factory.Faker('url')
-    ip_address = factory.Faker('ipv4')
-    user_agent = factory.Faker('user_agent')
-    file_size = factory.LazyFunction(lambda: randint(1024, 10_000_000))
-    success = factory.LazyFunction(lambda: bool(randint(0, 1)))
+    upload_url = factory.Faker('url')
+    scope = factory.SubFactory(ScopeFactory, type='odp')
+
+
+class ArchiveResourceFactory(ODPModelFactory):
+    class Meta:
+        model = ArchiveResource
+
+    archive = factory.SubFactory(ArchiveFactory)
+    resource = factory.SubFactory(ResourceFactory)
+    path = factory.Sequence(lambda n: f'{fake.uri(deep=randint(1, 4))}.{n}')
+    status = factory.LazyFunction(lambda: choices(('pending', 'valid', 'missing', 'corrupt'), weights=(4, 14, 1, 1))[0])
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
-    meta = factory.LazyFunction(lambda: {
-        'name': fake.name(),
-        'email': fake.email(),
-        'organisation': fake.company(),
-    })
 
 
 class SubmissionFactory(ODPModelFactory):
@@ -395,4 +497,24 @@ class SubmissionFactory(ODPModelFactory):
     collection = factory.SubFactory(CollectionFactory)
     schema_id = factory.LazyFunction(lambda: choice(('SAEON.DataCite4', 'SAEON.ISO19115')))
     record = factory.SubFactory(RecordFactory)
+
+
+class DownloadAuditFactory(ODPModelFactory):
+    class Meta:
+        model = DownloadAudit
+
+    client_id = factory.Sequence(lambda n: f'test.client.{n}')
+    user_id = factory.Faker('uuid4')
+    download_url = factory.Faker('url')
+    ip_address = factory.Faker('ipv4')
+    user_agent = factory.Faker('user_agent')
+    file_size = factory.LazyFunction(lambda: randint(1024, 10_000_000))
+    success = factory.LazyFunction(lambda: bool(randint(0, 1)))
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    meta = factory.LazyFunction(lambda: {
+        'name': fake.name(),
+        'email': fake.email(),
+        'organisation': fake.company(),
+        'download_type': choice(('single_record', 'zip_bundle')),
+    })
 

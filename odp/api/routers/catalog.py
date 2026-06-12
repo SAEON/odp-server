@@ -14,7 +14,7 @@ from fastapi.responses import RedirectResponse, FileResponse
 from starlette.background import BackgroundTask
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
-from pydantic import BaseModel, Field, Json
+from pydantic import Json
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import aliased, load_only
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_422_UNPROCESSABLE_ENTITY
@@ -25,8 +25,7 @@ from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
 from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCiteRecordModel, PublishedSAEONRecordModel,
-                            RetractedRecordModel,
-                            SearchResult)
+                            RetractedRecordModel, SearchResult, UserData)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
@@ -41,21 +40,6 @@ class SearchResultSort(str, Enum):
     TIMESTAMP_DESC = 'timestamp desc'
     RANK_DESC = 'rank desc'
 
-
-class UserData(BaseModel):
-    """User information for audit logging."""
-    name: str = Field(..., description="Full name of the user", min_length=1)
-    email: str = Field(..., description="Email address of the user", min_length=1)
-    organisation: str = Field(..., description="Organization or institution name", min_length=1)
-
-    class Config:
-        schema_extra = {
-            "example": {
-                "name": "John Smith",
-                "email": "john@example.com",
-                "organisation": "University"
-            }
-        }
 
 
 @router.get(

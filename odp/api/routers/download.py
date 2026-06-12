@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, Request, Depends
-from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST
+from fastapi import APIRouter, Depends, Query, Request
+from starlette.status import HTTP_201_CREATED
 from odp.api.lib.paging import Page
 from odp.api.lib.auth import Authorize
-from odp.api.models import DownloadAuditModel, DownloadAuditResponse, DownloadStatsModel
+from odp.api.models import DownloadAuditCreateModel, DownloadAuditModel, DownloadAuditResponse, DownloadStatsModel
 from odp.const import ODPScope
 from odp.db.models import DownloadAudit
 from odp.lib import download_service
@@ -14,33 +14,31 @@ router = APIRouter()
 
 
 @router.post('/audit', status_code=HTTP_201_CREATED, response_model=DownloadAuditResponse)
-async def create_download_audit(request: Request):
-    """
-    Accept JSON payload to record a download audit.
-    Persistence logic follows standard system methods.
-    """
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(HTTP_400_BAD_REQUEST, 'Invalid JSON payload')
-
-    meta = payload.get('meta', {}) or {}
-    for k in ('name', 'email', 'organisation', 'doi', 'record_id', 'catalog_url'):
-        if payload.get(k) is not None:
-            meta[k] = payload.get(k)
+async def create_download_audit(audit_in: DownloadAuditCreateModel, request: Request):
+    meta = {k: v for k, v in {
+        'name': audit_in.name,
+        'email': audit_in.email,
+        'organisation': audit_in.organisation,
+        'download_type': audit_in.download_type,
+        'doi': audit_in.doi,
+        'record_id': audit_in.record_id,
+        'record_ids': audit_in.record_ids,
+        'catalog_url': audit_in.catalog_url,
+    }.items() if v is not None}
 
     audit = DownloadAudit(
-        client_id=payload.get('client_id') or 'unknown',
-        user_id=payload.get('user_id'),
-        download_url=payload.get('download_url'),
+        client_id=audit_in.client_id or 'unknown',
+        user_id=audit_in.user_id,
+        download_url=audit_in.download_url,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get('user-agent'),
-        file_size=payload.get('file_size'),
-        success=bool(payload.get('success', True)),
+        file_size=audit_in.file_size,
+        success=audit_in.success,
         timestamp=datetime.now(timezone.utc),
         meta=meta,
     )
     audit.save()
-    return {"status": "ok", "audit_id": audit.id}
+    return {'status': 'ok', 'audit_id': audit.id}
 
 
 @router.get('/logs',
