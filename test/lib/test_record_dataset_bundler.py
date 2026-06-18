@@ -41,31 +41,45 @@ SAMPLE_METADATA = {
 # ============================================================================
 
 def test_safe_folder_name_basic():
-    assert create_safe_folder_name('Ocean Data 2024') == 'Ocean_Data_2024'
+    assert create_safe_folder_name('10.1234/ocean', 'Ocean Data 2024') == '10.1234_ocean_Ocean_Data_2024'
 
 
 def test_safe_folder_name_strips_invalid_chars():
-    result = create_safe_folder_name('Dataset: 2024/01 <Test>')
+    result = create_safe_folder_name('10.1234/ocean', 'Dataset: 2024/01 <Test>')
     for char in '<>:"/\\|?*':
         assert char not in result
 
 
 def test_safe_folder_name_collapses_underscores():
-    result = create_safe_folder_name('A   B')
+    result = create_safe_folder_name('10.1234/ocean', 'A   B')
     assert '__' not in result
 
 
 def test_safe_folder_name_truncates():
-    result = create_safe_folder_name('A' * 300)
+    result = create_safe_folder_name('10.1234/ocean', 'A' * 300)
     assert len(result) <= 200
 
 
+def test_safe_folder_name_truncation_preserves_doi():
+    doi = '10.1234/ocean'
+    result = create_safe_folder_name(doi, 'A' * 300)
+    assert result.startswith('10.1234_ocean_')
+
+
 def test_safe_folder_name_empty_returns_untitled():
-    assert create_safe_folder_name('') == 'Untitled'
+    assert create_safe_folder_name('', '') == 'Untitled'
 
 
 def test_safe_folder_name_none_returns_untitled():
-    assert create_safe_folder_name(None) == 'Untitled'
+    assert create_safe_folder_name(None, None) == 'Untitled'
+
+
+def test_safe_folder_name_doi_only():
+    assert create_safe_folder_name('10.1234/ocean', '') == '10.1234_ocean'
+
+
+def test_safe_folder_name_title_only():
+    assert create_safe_folder_name('', 'Ocean Data 2024') == 'Ocean_Data_2024'
 
 
 # ============================================================================

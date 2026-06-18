@@ -26,21 +26,39 @@ from odp.lib.pdf_generator import generate_pdf
 logger = logging.getLogger(__name__)
 
 
-def create_safe_folder_name(title: str, max_length: int = 200) -> str:
-    """Sanitize title for ZIP folder structure."""
-    if not title or not isinstance(title, str):
-        return 'Untitled'
+def _sanitize_name_part(value: str) -> str:
+    """Sanitize a single name component for use in a ZIP folder/file path."""
+    if not value or not isinstance(value, str):
+        return ''
 
-    invalid_chars = r'[<>:"/\\|?*]'
-    sanitized = re.sub(invalid_chars, '', title.strip())
+    value = value.strip().replace('/', '_').replace('\\', '_')
+    sanitized = re.sub(r'[<>:"|?*]', '', value)
     sanitized = sanitized.replace(' ', '_')
     sanitized = re.sub(r'_+', '_', sanitized)
-    sanitized = sanitized.strip('_')
+    return sanitized.strip('_')
 
-    if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length].rstrip('_')
 
-    return sanitized or 'Untitled'
+def create_safe_folder_name(doi: str, title: str, max_length: int = 200) -> str:
+    """Build a sanitized '{doi}_{title}' folder name for the ZIP structure.
+
+    The DOI is always preserved in full, with only the title truncated if
+    needed, so that a truncated folder name still uniquely identifies the
+    record.
+    """
+    safe_doi = _sanitize_name_part(doi)
+    safe_title = _sanitize_name_part(title)
+
+    if safe_doi and safe_title:
+        name = f'{safe_doi}_{safe_title}'
+        if len(name) > max_length:
+            remaining = max_length - len(safe_doi) - 1
+            name = f'{safe_doi}_{safe_title[:remaining].rstrip("_")}' if remaining > 0 else safe_doi[:max_length]
+    else:
+        name = safe_doi or safe_title
+        if len(name) > max_length:
+            name = name[:max_length].rstrip('_')
+
+    return name or 'Untitled'
 
 
 def fetch_external_file(url: str, timeout: int = 30) -> Tuple[Optional[bytes], Optional[str]]:
@@ -145,7 +163,7 @@ def bundle_catalog_records(
                                 metadata.get('title') or
                                 f"Record_{doi}"
                         )
-                        folder_name = create_safe_folder_name(raw_title)
+                        folder_name = create_safe_folder_name(doi, raw_title)
 
                         try:
                             record_metadata = adapt_metadata(metadata)
