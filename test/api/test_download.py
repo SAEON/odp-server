@@ -45,12 +45,10 @@ def test_create_audit_full(api):
         'download_url': 'http://example.com/data.zip',
         'file_size': 204800,
         'success': True,
-        'meta': {
-            'name': 'Test User',
-            'email': 'test@saeon.ac.za',
-            'organisation': 'SAEON',
-            'doi': '10.1234/test',
-        },
+        'name': 'Test User',
+        'email': 'test@saeon.ac.za',
+        'organisation': 'SAEON',
+        'doi': '10.1234/test',
     }
     r = api([]).post('/download/audit', json=payload)
     assert r.status_code == 201
@@ -64,7 +62,7 @@ def test_create_audit_full(api):
 
 def test_create_audit_invalid_payload(api):
     r = api([]).post('/download/audit', json=[1, 2, 3])
-    assert r.status_code == 400
+    assert r.status_code == 422
 
 
 # GET /logs
