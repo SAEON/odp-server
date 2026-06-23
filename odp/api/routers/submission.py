@@ -158,6 +158,33 @@ async def dataset_upload(
 
 
 @router.post(
+    '/{submission_id}/dataset_url',
+    dependencies=[Depends(Authorize(ODPScope.SUBMISSION_WRITE))],
+)
+async def add_dataset_url(
+        submission_id: int,
+        user_id: str,
+        dataset_url: str,
+):
+    statement = select(Submission).where(
+        Submission.id == submission_id,
+        Submission.user_id == user_id
+    )
+
+    result = Session.execute(statement)
+    submission = result.scalar_one_or_none()
+
+    if not submission:
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    submission.dataset_url = dataset_url
+
+    submission.save()
+
+    return submission
+
+
+@router.post(
     '/submit/{submission_id}',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_WRITE))],
 )

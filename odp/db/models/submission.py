@@ -18,6 +18,7 @@ class Submission(Base):
     data = Column(JSONB, nullable=False)
     status = Column(Enum(SubmissionStatus), nullable=False)
     dataset_file_name = Column(String, nullable=True)
+    dataset_url = Column(String, nullable=True)
     timestamp = Column(TIMESTAMP(timezone=True))
     collection_id = Column(String, ForeignKey('collection.id'), nullable=True)
     schema_id = Column(String, nullable=True)
