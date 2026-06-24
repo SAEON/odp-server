@@ -1,3 +1,4 @@
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
@@ -52,6 +53,11 @@ class MetadataAdapter(ABC):
             parts = search_target.lower().split("email:")
             if len(parts) > 1:
                 person.email = parts[-1].strip().split()[0].rstrip(',;')
+            # Strip the email portion from affiliation so it isn't rendered twice
+            if person.email and person.email != "N/A":
+                person.affiliation = re.sub(
+                    r',?\s*email:\s*\S+', '', person.affiliation, flags=re.IGNORECASE
+                ).strip().rstrip(',').strip()
 
         # Extract ORCID (DataCite specific)
         for identifier in person_data.get("nameIdentifiers", []):
