@@ -5,13 +5,12 @@ from datetime import date
 from enum import Enum
 from functools import partial
 from math import ceil
-from typing import Any, Optional, List
+from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from fastapi.responses import RedirectResponse, FileResponse
-from starlette.background import BackgroundTask
+from fastapi.responses import RedirectResponse
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
 from pydantic import Json
@@ -20,17 +19,17 @@ from sqlalchemy.orm import aliased, load_only
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_422_UNPROCESSABLE_ENTITY
 
 from odp.api.lib.auth import Authorize
-from odp.config import config
 from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
-from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCiteRecordModel, PublishedSAEONRecordModel,
+from odp.api.models import (CatalogModel, CatalogModelWithData, MetadataBundleResponse,
+                            PublishedDataCiteRecordModel, PublishedSAEONRecordModel,
                             RetractedRecordModel, SearchResult, UserData)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
 from odp.lib.datacite import DataciteClient, DataciteError
-from odp.lib.record_dataset_bundler import bundle_catalog_records
+from odp.lib.record_dataset_bundler import generate_metadata_bundle
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -353,7 +352,7 @@ async def get_metadata_value(
 
 @router.get(
     '/{catalog_id}/external/{record_id}',
-    response_model=Optional[dict[str, Any]],
+    response_model=dict[str, Any] | None,
     dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
 )
 async def get_external_record(
@@ -404,7 +403,7 @@ async def redirect_to(
 )
 async def records_subset(
         catalog_id: str,
-        record_id_or_doi_list: List[str] = Query(..., alias="record_id_or_doi_list"),
+        record_id_or_doi_list: list[str] = Query(..., alias="record_id_or_doi_list"),
         page: int = 1,
         size: int = 50
 ):
@@ -466,75 +465,40 @@ async def records_subset(
 
 
 @router.post(
-    '/generate-zip-bundle',
-    response_class=FileResponse,
-    summary='Generate server-side ZIP bundle',
-    description='Generate a server-side ZIP file containing metadata PDFs and data files for selected records',
-    status_code=200,
+    '/metadata-bundle',
+    response_model=MetadataBundleResponse,
+    summary='Generate metadata bundle (client-side ZIP)',
     dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
 )
-def generate_zip_bundle(
+def metadata_bundle(
         record_ids: list[str],
         user_data: UserData,
-        request: Request
+        request: Request,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+        referer: str | None = None,
 ):
-    """
-    Generate ZIP bundle with metadata PDFs and data files.
-
-    Explicit parameters:
-    - **record_ids**: List of DOIs to include (non-empty array)
-    - **user_data**: User information object with name, email, organisation (all required)
-
-    The endpoint automatically extracts client IP and user-agent from HTTP headers
-    for audit logging purposes.
-
-    Returns binary ZIP file with structure:
-        /Record_Title/metadata.pdf
-        /Record_Title/data_file
-
-    Response headers:
-    - X-Bundle-Record-Count: Number of successfully processed records
-    - X-Bundle-Failed-Count: Number of failed records
-    """
+    """Return metadata PDFs (base64) + data file URLs per record. No data file downloading."""
     try:
-
-        client_ip = request.client.host if request.client else None
-        user_agent = request.headers.get('user-agent')
-
-        # Derive catalog base URL from the browser's Referer header
-        referer = request.headers.get('referer', '')
-        if referer:
-            parsed = urlparse(referer)
+        resolved_ip = client_ip or (request.client.host if request.client else None)
+        resolved_ua = user_agent or request.headers.get('user-agent')
+        resolved_referer = referer or request.headers.get('referer', '')
+        catalog_url = None
+        if resolved_referer:
+            parsed = urlparse(resolved_referer)
             catalog_url = f"{parsed.scheme}://{parsed.netloc}"
-        else:
-            catalog_url = config.ODP.API_URL
 
-        result = bundle_catalog_records(
+        return generate_metadata_bundle(
             record_ids=record_ids,
             user_data=user_data.dict(),
-            client_ip=client_ip,
-            user_agent=user_agent,
+            client_ip=resolved_ip,
+            user_agent=resolved_ua,
             catalog_url=catalog_url,
         )
-
-        background_task = BackgroundTask(os.remove, result.zip_path)
-
-        return FileResponse(
-            result.zip_path,
-            media_type='application/zip',
-            filename="records.zip",
-            background=background_task,
-            headers={
-                'X-Bundle-Record-Count': str(result.record_count),
-                'X-Bundle-Failed-Count': str(result.failed_count),
-            }
-        )
-
     except HTTPException:
         raise
     except ValueError as e:
-        logger.warning(f"ZIP generation validation error: {str(e)}")
         raise HTTPException(400, str(e))
     except Exception as e:
-        logger.error(f"ZIP generation error: {str(e)}")
+        logger.error(f"Metadata bundle error: {e}", exc_info=True)
         raise HTTPException(500, "Internal server error")
