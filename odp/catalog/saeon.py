@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -64,37 +63,32 @@ class SAEONCatalog(Catalog):
                 )
             ]
         elif record_model.schema_id == ODPMetadataSchema.SAEON_EML:
-                eml_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_EML, SchemaType.metadata))
-                datacite_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_DATACITE4, SchemaType.metadata))
+            eml_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_EML, SchemaType.metadata))
+            datacite_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_DATACITE4, SchemaType.metadata))
 
-                eml_jsonschema = schema_catalog.get_schema(URI(eml_schemaobj.uri))
-                result = eml_jsonschema.evaluate(JSON(record_model.metadata))
-                datacite_metadata = result.output(
-                    'translation',
-                    scheme='saeon/datacite4',
-                    ignore_validity=True,
-                    clear_empties=True,
-                )
-
-        if not datacite_metadata:
-            datacite_metadata = {}
-            logger.warning(
-                f"EML->DataCite translation failed for record {record_model.id}. No DataCite metadata produced.")
-            logger.debug(
-                f"Failed EML content:\n{json.dumps(record_model.metadata, indent=2)}\nValidation:\n{result.output('basic')}")
-        else:
-            logger.info(
-                f"Translated DataCite metadata for record {record_model.id} "
-                f"(Schema: {datacite_schemaobj.id} | URI: {datacite_schemaobj.uri}):\n"
-                f"{json.dumps(datacite_metadata, indent=2)}"
+            eml_jsonschema = schema_catalog.get_schema(URI(eml_schemaobj.uri))
+            result = eml_jsonschema.evaluate(JSON(record_model.metadata))
+            datacite_metadata = result.output(
+                'translation',
+                scheme='saeon/datacite4',
+                ignore_validity=True,
+                clear_empties=True,
             )
-            published_metadata += [
-                PublishedMetadataModel(
-                    schema_id=datacite_schemaobj.id,
-                    schema_uri=datacite_schemaobj.uri,
-                    metadata=datacite_metadata,
+
+            if not datacite_metadata:
+                logger.warning(
+                    "Translation failed. No DataCite metadata produced for record %s using schema %s",
+                    record_model.id,
+                    record_model.schema_id,
                 )
-            ]
+            else:
+                published_metadata += [
+                    PublishedMetadataModel(
+                        schema_id=datacite_schemaobj.id,
+                        schema_uri=datacite_schemaobj.uri,
+                        metadata=datacite_metadata,
+                    )
+                ]
         return published_metadata
 
     @staticmethod
@@ -115,21 +109,17 @@ class SAEONCatalog(Catalog):
         """Create a string from metadata field values to be indexed for full text search."""
         datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
         values = []
-        if not datacite_metadata:
-            logger.debug(f"No DataCite metadata found for record {published_record.id}")
-
-        else:
-            logger.debug(
-                f"DataCite metadata for record {published_record.id}:\n"
-                f"{json.dumps(datacite_metadata, indent=2)}"
-            )
 
         for title in datacite_metadata.get('titles', ()):
             if title_text := title.get('title'):
                 values += [title_text]
 
         if publisher := datacite_metadata.get('publisher'):
-            values += [publisher]
+            if isinstance(publisher, str):
+                values += [publisher]
+            elif isinstance(publisher, dict):
+                if publisher_name := publisher.get('name') or publisher.get('organizationName'):
+                    values += [publisher_name]
 
         for creator in datacite_metadata.get('creators', ()):
             if creator_name := creator.get('name'):
@@ -286,9 +276,19 @@ class SAEONCatalog(Catalog):
     def _get_metadata_dict(
             published_record: PublishedSAEONRecordModel,
             schema_id: ODPMetadataSchema,
-    ) -> Optional[dict]:
-        return next((
+    ) -> dict:
+        metadata = next((
             metadata_record.metadata
             for metadata_record in published_record.metadata_records
             if metadata_record.schema_id == schema_id
         ), None)
+
+        if metadata is None:
+            logger.warning(
+                "No metadata record found for schema %s on published record %s",
+                schema_id,
+                published_record.id,
+            )
+            return {}
+
+        return metadata
