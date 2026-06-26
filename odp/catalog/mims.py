@@ -165,6 +165,8 @@ class MIMSCatalog(SAEONCatalog):
         property with an RIS-format citation."""
 
         def handle_resource_type(resource_type) -> str:
+            if not resource_type:
+                return "TY  - GEN\n"
             meta_resource_type: str = resource_type.get('resourceTypeGeneral')
             # Set the mapped resource type to GEN (Generic) by default
             mapped_resource_type: str = resource_type_mapping.get(meta_resource_type, 'GEN')
@@ -187,6 +189,11 @@ class MIMSCatalog(SAEONCatalog):
                 if description.get('descriptionType') == 'Abstract':
                     return f"AB  - {description.get('description')}\n"
             return ''
+
+        def handle_publisher(publisher) -> str:
+            if isinstance(publisher, dict):
+                publisher = publisher.get('name') or publisher.get('organizationName')
+            return f"PB  - {publisher}\n" if publisher else ''
 
         resource_type_mapping: dict = {
             'Audiovisual': 'ADVS',
@@ -211,7 +218,7 @@ class MIMSCatalog(SAEONCatalog):
             'creators': handle_creators,
             'descriptions': handle_abstract,
             'doi': lambda doi: f"DO  - {doi}\n",
-            'publisher': lambda publisher: f"PB  - {publisher}\n",
+            'publisher': handle_publisher,
             'publicationYear': lambda publish_year: f"PY  - {publish_year}\n",
             'language': lambda language: f"LA  - {language}\n",
         }
