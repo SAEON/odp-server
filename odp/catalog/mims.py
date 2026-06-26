@@ -322,7 +322,7 @@ class MIMSCatalog(SAEONCatalog):
                     if subject.strip():
                         facets['Keyword'].append(subject.strip())
 
-        return facets
+        return {k: list(dict.fromkeys(v)) for k, v in facets.items()}
 
     def create_global_data(self) -> Any:
         """Create a JSON-compatible object to be published as global data for the catalog."""
