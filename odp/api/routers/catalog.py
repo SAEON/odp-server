@@ -22,9 +22,9 @@ from odp.api.lib.auth import Authorize
 from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
-from odp.api.models import (CatalogModel, CatalogModelWithData, MetadataBundleResponse,
-                            PublishedDataCiteRecordModel, PublishedSAEONRecordModel,
-                            RetractedRecordModel, SearchResult, UserData)
+from odp.api.models import (CatalogModel, CatalogModelWithData, MetadataBundleRequest,
+                            MetadataBundleResponse, PublishedDataCiteRecordModel,
+                            PublishedSAEONRecordModel, RetractedRecordModel, SearchResult)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
@@ -471,26 +471,22 @@ async def records_subset(
     dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
 )
 def metadata_bundle(
-        record_ids: list[str],
-        user_data: UserData,
+        body: MetadataBundleRequest,
         request: Request,
-        client_ip: str | None = None,
-        user_agent: str | None = None,
-        referer: str | None = None,
 ):
     """Return metadata PDFs (base64) + data file URLs per record. No data file downloading."""
     try:
-        resolved_ip = client_ip or (request.client.host if request.client else None)
-        resolved_ua = user_agent or request.headers.get('user-agent')
-        resolved_referer = referer or request.headers.get('referer', '')
+        resolved_ip = body.client_ip or (request.client.host if request.client else None)
+        resolved_ua = body.user_agent or request.headers.get('user-agent')
+        resolved_referer = body.referer or request.headers.get('referer', '')
         catalog_url = None
         if resolved_referer:
             parsed = urlparse(resolved_referer)
             catalog_url = f"{parsed.scheme}://{parsed.netloc}"
 
         return generate_metadata_bundle(
-            record_ids=record_ids,
-            user_data=user_data.dict(),
+            record_ids=body.record_ids,
+            user_data=body.user_data.dict(),
             client_ip=resolved_ip,
             user_agent=resolved_ua,
             catalog_url=catalog_url,
