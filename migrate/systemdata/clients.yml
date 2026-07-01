@@ -63,3 +63,28 @@ ODP.Migrate:
     - odp.vocabulary:project
   grant_types:
     - client_credentials
+
+MIMS.Catalog.UI:
+  name: MIMS User Interface
+  secret_env: MIMS_CATALOG_UI_CLIENT_SECRET
+  url_env: MIMS_CATALOG_URL
+  scopes:
+    - odp.record:read
+    - odp.token:read
+    - openid
+    - offline_access
+  grant_types:
+    - authorization_code
+    - refresh_token
+  response_types:
+    - code
+
+MIMS.Catalog.CI:
+  name: MIMS Catalog Client Interface
+  secret_env: MIMS_CATALOG_CI_CLIENT_SECRET
+  scopes:
+    - odp.catalog:read
+    - odp.catalog:search
+    - odp.vocabulary:read
+  grant_types:
+    - client_credentials

@@ -1,12 +1,15 @@
+import logging
+import os
 import re
 from datetime import date
 from enum import Enum
 from functools import partial
 from math import ceil
-from typing import Any, Optional
+from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import RedirectResponse
 from jschon import JSONPointer
 from jschon.exc import JSONPointerMalformedError, JSONPointerReferenceError
@@ -19,19 +22,23 @@ from odp.api.lib.auth import Authorize
 from odp.api.lib.datacite import get_datacite_client
 from odp.api.lib.paging import Page, Paginator
 from odp.api.lib.utils import output_published_record_model
-from odp.api.models import (CatalogModel, CatalogModelWithData, PublishedDataCiteRecordModel, PublishedSAEONRecordModel, RetractedRecordModel,
-                            SearchResult)
+from odp.api.models import (CatalogModel, CatalogModelWithData, MetadataBundleRequest,
+                            MetadataBundleResponse, PublishedDataCiteRecordModel,
+                            PublishedSAEONRecordModel, RetractedRecordModel, SearchResult)
 from odp.const import DOI_REGEX, ODPCatalog, ODPScope
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, CatalogRecordFacet, PublishedRecord, Record
 from odp.lib.datacite import DataciteClient, DataciteError
+from odp.lib.record_dataset_bundler import generate_metadata_bundle
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SearchResultSort(str, Enum):
     TIMESTAMP_DESC = 'timestamp desc'
     RANK_DESC = 'rank desc'
+
 
 
 @router.get(
@@ -243,19 +250,19 @@ async def search_records(
     facets = {}
     facet_subquery = select(CatalogRecordFacet).subquery()
     for row in Session.execute(
-        select(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-            func.count(),
-        )
-        .join_from(
-            stmt.subquery(),
-            facet_subquery,
-        )
-        .group_by(
-            facet_subquery.c.facet,
-            facet_subquery.c.value,
-        )
+            select(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+                func.count(),
+            )
+                    .join_from(
+                stmt.subquery(),
+                facet_subquery,
+            )
+                    .group_by(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+            )
     ):
         facets.setdefault(row.facet, [])
         facets[row.facet] += [(row.value, row.count)]
@@ -345,7 +352,7 @@ async def get_metadata_value(
 
 @router.get(
     '/{catalog_id}/external/{record_id}',
-    response_model=Optional[dict[str, Any]],
+    response_model=dict[str, Any] | None,
     dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
 )
 async def get_external_record(
@@ -386,3 +393,108 @@ async def redirect_to(
     url += catalog_record.record.doi if catalog_record.record.doi else catalog_record.record_id
 
     return RedirectResponse(url)
+
+
+@router.get(
+    '/{catalog_id}/subset',
+    response_model=SearchResult,
+    dependencies=[Depends(Authorize(ODPScope.CATALOG_SEARCH))],
+    description="Return a catalog's subset published records.",
+)
+async def records_subset(
+        catalog_id: str,
+        record_id_or_doi_list: list[str] = Query(..., alias="record_id_or_doi_list"),
+        page: int = 1,
+        size: int = 50
+):
+    if not Session.get(Catalog, catalog_id):
+        raise HTTPException(HTTP_404_NOT_FOUND)
+
+    stmt = (
+        select(CatalogRecord)
+        .where(CatalogRecord.catalog_id == catalog_id)
+        .where(CatalogRecord.record_id.in_(record_id_or_doi_list))
+        .where(CatalogRecord.published)
+        .where(CatalogRecord.searchable)
+    )
+
+    total = Session.execute(
+        select(func.count())
+        .select_from(stmt.subquery())
+    ).scalar_one()
+
+    order_by = CatalogRecord.timestamp.desc()
+
+    limit = size or total
+    items = [
+        output_published_record_model(row.CatalogRecord) for row in Session.execute(
+            stmt.
+            order_by(order_by).
+            offset(limit * (page - 1)).
+            limit(limit)
+        )
+    ]
+
+    facets = {}
+    facet_subquery = select(CatalogRecordFacet).subquery()
+    for row in Session.execute(
+            select(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+                func.count(),
+            )
+                    .join_from(
+                stmt.subquery(),
+                facet_subquery,
+            )
+                    .group_by(
+                facet_subquery.c.facet,
+                facet_subquery.c.value,
+            )
+    ):
+        facets.setdefault(row.facet, [])
+        facets[row.facet] += [(row.value, row.count)]
+
+    return SearchResult(
+        facets=facets,
+        items=items,
+        total=total,
+        page=page,
+        pages=ceil(total / limit) if limit else 0,
+    )
+
+
+@router.post(
+    '/metadata-bundle',
+    response_model=MetadataBundleResponse,
+    summary='Generate metadata bundle (client-side ZIP)',
+    dependencies=[Depends(Authorize(ODPScope.CATALOG_READ))],
+)
+def metadata_bundle(
+        body: MetadataBundleRequest,
+        request: Request,
+):
+    """Return metadata PDFs (base64) + data file URLs per record. No data file downloading."""
+    try:
+        resolved_ip = body.client_ip or (request.client.host if request.client else None)
+        resolved_ua = body.user_agent or request.headers.get('user-agent')
+        resolved_referer = body.referer or request.headers.get('referer', '')
+        catalog_url = None
+        if resolved_referer:
+            parsed = urlparse(resolved_referer)
+            catalog_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        return generate_metadata_bundle(
+            record_ids=body.record_ids,
+            user_data=body.user_data.dict(),
+            client_ip=resolved_ip,
+            user_agent=resolved_ua,
+            catalog_url=catalog_url,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Metadata bundle error: {e}", exc_info=True)
+        raise HTTPException(500, "Internal server error")

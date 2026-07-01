@@ -7,8 +7,8 @@ from factory.alchemy import SQLAlchemyModelFactory
 from faker import Faker
 
 from odp.db import Session
-from odp.db.models import (Catalog, Client, Collection, CollectionTag, Provider, Record, RecordTag, Role, Schema, Scope, Tag, User,
-                           Vocabulary, VocabularyTerm)
+from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role, Schema, Scope,
+                           Tag, User, Vocabulary, VocabularyTerm)
 from test import datacite4_example, iso19115_example
 
 fake = Faker()
@@ -329,3 +329,23 @@ class RoleFactory(ODPModelFactory):
                 obj.collections.append(collection)
             if create:
                 Session.commit()
+
+
+class DownloadAuditFactory(ODPModelFactory):
+    class Meta:
+        model = DownloadAudit
+
+    client_id = factory.Sequence(lambda n: f'test.client.{n}')
+    user_id = factory.Faker('uuid4')
+    download_url = factory.Faker('url')
+    ip_address = factory.Faker('ipv4')
+    user_agent = factory.Faker('user_agent')
+    file_size = factory.LazyFunction(lambda: randint(1024, 10_000_000))
+    success = factory.LazyFunction(lambda: bool(randint(0, 1)))
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    meta = factory.LazyFunction(lambda: {
+        'name': fake.name(),
+        'email': fake.email(),
+        'organisation': fake.company(),
+        'download_type': choice(('single_record', 'zip_bundle')),
+    })
