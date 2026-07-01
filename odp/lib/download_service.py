@@ -151,6 +151,7 @@ def get_download_logs(
             ip_address=d.ip_address,
             doi=d.meta.get('doi') if d.meta else None,
             record_ids=d.meta.get('record_ids', []) if d.meta else [],
+            catalog_url=d.meta.get('catalog_url') if d.meta else None,
         )
         for d in downloads
     ]
@@ -184,10 +185,10 @@ def generate_downloads_csv(
         catalog_url = meta.get('catalog_url', '')
         view_link = ""
         if catalog_url and dtype == 'single_record' and meta.get('doi'):
-            view_link = f"{catalog_url}/{meta.get('doi')}"
+            view_link = f"{catalog_url}/catalog/{meta.get('doi')}"
         elif catalog_url and dtype == 'zip_bundle' and meta.get('record_ids'):
             query_string = '&'.join([f'record_id_or_doi_list={rid}' for rid in meta.get('record_ids', [])])
-            view_link = f"{catalog_url}/subset?{query_string}"
+            view_link = f"{catalog_url}/catalog/subset?{query_string}"
 
         writer.writerow([
             d.id, d.timestamp.isoformat(), meta.get('name', ''), meta.get('email', ''),
