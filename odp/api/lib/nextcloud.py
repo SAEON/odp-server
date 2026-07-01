@@ -21,13 +21,11 @@ def upload_file_to_nextcloud(local_path_to_file, folder_name, file_name):
 
     try:
         with open(local_path_to_file, 'rb') as f:
-            file_data = f.read()
-
-        response = requests.put(
-            webdav_url,
-            data=file_data,
-            auth=(config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD),
-        )
+            response = requests.put(
+                webdav_url,
+                data=f,
+                auth=(config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD),
+            )
 
         if response.status_code == 201 or response.status_code == 204:
             logger.info(f"Success! File uploaded. Status code: {response.status_code}")
