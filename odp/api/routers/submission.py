@@ -1,9 +1,11 @@
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
 from jschon import JSON, URI
 from sqlalchemy import select
 from starlette.status import HTTP_404_NOT_FOUND
@@ -27,6 +29,8 @@ from odp.lib.schema import schema_catalog
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
+
 
 def submission_list_item_model(submission: Submission) -> SubmissionListItemModel:
     return SubmissionListItemModel(
@@ -36,7 +40,6 @@ def submission_list_item_model(submission: Submission) -> SubmissionListItemMode
     )
 
 
-# user: list, detail, create, data upload, submit, delete
 @router.get(
     '/user_submissions',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_READ))],
@@ -121,12 +124,33 @@ async def update_submission(
     return submission
 
 
+def process_nextcloud_upload_task(local_path_to_file: Path, temp_dir: Path, submission_id: int, filename: str):
+    try:
+        upload_success = upload_file_to_nextcloud(local_path_to_file, submission_id, filename)
+
+        if not upload_success:
+            logger.exception(f"Uploading dataset failed for submission with ID: {submission_id}: {e}")
+
+    except Exception as e:
+        logger.exception(f"Uploading dataset failed for submission with ID: {submission_id}: {e}")
+    finally:
+        if os.path.exists(local_path_to_file):
+            os.remove(local_path_to_file)
+
+        if os.path.exists(temp_dir):
+            try:
+                os.rmdir(temp_dir)
+            except OSError:
+                pass
+
+
 @router.put(
     '/{submission_id}/upload',
     dependencies=[Depends(Authorize(ODPScope.SUBMISSION_WRITE))],
 )
 async def dataset_upload(
         submission_id: int,
+        background_tasks: BackgroundTasks,
         file: UploadFile = File(...)
 ):
     if not (submission := Session.get(Submission, submission_id)):
@@ -140,21 +164,21 @@ async def dataset_upload(
     local_path_to_file = temp_dir / file.filename
 
     try:
-        with open(local_path_to_file, "wb") as f:
-            f.write(file.file.read())
-
-        upload_file_to_nextcloud(local_path_to_file, submission_id, file.filename)
-
-        submission.dataset_file_name = file.filename
-        submission.save()
+        with open(local_path_to_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
     finally:
-        if os.path.exists(local_path_to_file):
-            os.remove(local_path_to_file)
-
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
-
         await file.close()
+
+    submission.dataset_file_name = file.filename
+    submission.save()
+
+    background_tasks.add_task(
+        process_nextcloud_upload_task,
+        local_path_to_file=local_path_to_file,
+        temp_dir=temp_dir,
+        submission_id=submission_id,
+        filename=file.filename
+    )
 
 
 @router.post(
