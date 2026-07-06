@@ -50,11 +50,9 @@ class MIMSCatalog(SAEONCatalog):
                 cannot_publish_reasons = []
                 self.evaluate_record(child_record_model, can_publish_reasons, cannot_publish_reasons)
                 is_child_published = not cannot_publish_reasons
-                logger.debug(f"Record {child_id} is a child record")
             else:
                 catalog_record = Session.get(CatalogRecord, (self.catalog_id, child_id))
                 is_child_published = catalog_record.published
-                logger.debug(f"Record {child_id} is NOT a child record")
 
             if is_child_published:
                 for metadata_record in published_record.metadata_records:
