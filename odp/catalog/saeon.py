@@ -159,13 +159,21 @@ class SAEONCatalog(Catalog):
         keyword_list = []
         keyword_set = set()
 
-        if iso19115_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_ISO19115):
+        iso19115_metadata = next((
+            metadata_record.metadata
+            for metadata_record in published_record.metadata_records
+            if metadata_record.schema_id == ODPMetadataSchema.SAEON_ISO19115
+        ), None)
+
+        if iso19115_metadata:
             for keyword_obj in iso19115_metadata.get('descriptiveKeywords', ()):
                 if keyword_obj.get('keywordType') in ('general', 'place', 'stratum'):
                     _add_keyword(keyword_obj.get('keyword', ''))
-
         else:
-            datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
+            datacite_metadata = self._get_metadata_dict(
+                published_record,
+                ODPMetadataSchema.SAEON_DATACITE4,
+            )
             for subject_obj in datacite_metadata.get('subjects', ()):
                 _add_keyword(subject_obj.get('subject', ''))
 

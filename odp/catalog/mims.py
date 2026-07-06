@@ -92,7 +92,7 @@ class MIMSCatalog(SAEONCatalog):
             self, published_record: PublishedSAEONRecordModel, mims_catalog
     ) -> dict[str, Any]:
         """Create a JSON-LD metadata dictionary, using the schema.org vocabulary."""
-        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)or {}
+        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
 
         title = next(
             (t.get('title') for t in datacite_metadata.get('titles', ())),
@@ -233,7 +233,7 @@ class MIMSCatalog(SAEONCatalog):
         # The resource type is the first tag that must be added.
         key_words: list[str] = self.create_keyword_index_data(published_record)
 
-        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)or {}
+        datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
 
         ris_citation += handle_resource_type(datacite_metadata.get('types'))
 
@@ -269,7 +269,13 @@ class MIMSCatalog(SAEONCatalog):
             'place': 'Location',
             'stratum': 'Instrument',
         }
-        if iso19115_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_ISO19115):
+        iso19115_metadata = next((
+            metadata_record.metadata
+            for metadata_record in published_record.metadata_records
+            if metadata_record.schema_id == ODPMetadataSchema.SAEON_ISO19115
+        ), None)
+
+        if iso19115_metadata:
             for keyword_obj in iso19115_metadata.get('descriptiveKeywords', ()):
                 if (keyword_type := keyword_obj.get('keywordType')) in ('theme', 'place', 'stratum'):
                     facets[iso19115_facets[keyword_type]] += [keyword_obj.get('keyword', '')]
