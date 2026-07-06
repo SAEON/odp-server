@@ -17,14 +17,14 @@ jobs:
         with:
           repository: SAEON/odp-core
           path: odp-core
-          ref: v2-prod
+          ref: v2-staging
 
       - name: Check out odp-ui
         uses: actions/checkout@v4
         with:
           repository: SAEON/odp-ui
           path: odp-ui
-          ref: v2-prod
+          ref: v2-staging
 
       - name: Set up Python
         uses: actions/setup-python@v4
