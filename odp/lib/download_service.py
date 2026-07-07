@@ -182,7 +182,7 @@ def generate_downloads_csv(
     for d in downloads:
         meta = d.meta or {}
         dtype = meta.get('download_type')
-        catalog_url = meta.get('catalog_url', '')
+        catalog_url = meta.get('catalog_url', '').rstrip('/')
         view_link = ""
         if catalog_url and dtype == 'single_record' and meta.get('doi'):
             view_link = f"{catalog_url}/catalog/{meta.get('doi')}"
