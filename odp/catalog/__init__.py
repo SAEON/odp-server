@@ -329,6 +329,7 @@ class Catalog:
                 catalog_record.error_count = 0
                 synced += 1
             except Exception as e:
+                logger.error(f'{self.catalog_id} catalog: Failed to sync record {catalog_record.record_id}: {repr(e)}')
                 catalog_record.error = repr(e)
                 catalog_record.error_count += 1
 
@@ -445,5 +446,5 @@ def publish_all():
         logger.info('PUBLISHING FINISHED')
 
     except Exception as e:
-        logger.critical(f'PUBLISHING ABORTED: {str(e)}')
+        logger.critical(f'PUBLISHING ABORTED while publishing catalog {catalog_id}: {str(e)}', exc_info=True)
         raise

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -11,6 +12,7 @@ from odp.db import Session
 from odp.db.models import Schema
 from odp.lib.schema import schema_catalog
 
+logger = logging.getLogger(__name__)
 
 class SAEONCatalog(Catalog):
     indexed = True
@@ -53,7 +55,6 @@ class SAEONCatalog(Catalog):
                 ignore_validity=True,
                 clear_empties=True,
             )
-
             published_metadata += [
                 PublishedMetadataModel(
                     schema_id=datacite_schemaobj.id,
@@ -61,7 +62,33 @@ class SAEONCatalog(Catalog):
                     metadata=datacite_metadata,
                 )
             ]
+        elif record_model.schema_id == ODPMetadataSchema.SAEON_EML:
+            eml_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_EML, SchemaType.metadata))
+            datacite_schemaobj = Session.get(Schema, (ODPMetadataSchema.SAEON_DATACITE4, SchemaType.metadata))
 
+            eml_jsonschema = schema_catalog.get_schema(URI(eml_schemaobj.uri))
+            result = eml_jsonschema.evaluate(JSON(record_model.metadata))
+            datacite_metadata = result.output(
+                'translation',
+                scheme='saeon/datacite4',
+                ignore_validity=True,
+                clear_empties=True,
+            )
+
+            if not datacite_metadata:
+                logger.warning(
+                    "Translation failed. No DataCite metadata produced for record %s using schema %s",
+                    record_model.id,
+                    record_model.schema_id,
+                )
+            else:
+                published_metadata += [
+                    PublishedMetadataModel(
+                        schema_id=datacite_schemaobj.id,
+                        schema_uri=datacite_schemaobj.uri,
+                        metadata=datacite_metadata,
+                    )
+                ]
         return published_metadata
 
     @staticmethod
@@ -88,7 +115,11 @@ class SAEONCatalog(Catalog):
                 values += [title_text]
 
         if publisher := datacite_metadata.get('publisher'):
-            values += [publisher]
+            if isinstance(publisher, str):
+                values += [publisher]
+            elif isinstance(publisher, dict):
+                if publisher_name := publisher.get('name') or publisher.get('organizationName'):
+                    values += [publisher_name]
 
         for creator in datacite_metadata.get('creators', ()):
             if creator_name := creator.get('name'):
@@ -128,13 +159,21 @@ class SAEONCatalog(Catalog):
         keyword_list = []
         keyword_set = set()
 
-        if iso19115_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_ISO19115):
+        iso19115_metadata = next((
+            metadata_record.metadata
+            for metadata_record in published_record.metadata_records
+            if metadata_record.schema_id == ODPMetadataSchema.SAEON_ISO19115
+        ), None)
+
+        if iso19115_metadata:
             for keyword_obj in iso19115_metadata.get('descriptiveKeywords', ()):
                 if keyword_obj.get('keywordType') in ('general', 'place', 'stratum'):
                     _add_keyword(keyword_obj.get('keyword', ''))
-
         else:
-            datacite_metadata = self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_DATACITE4)
+            datacite_metadata = self._get_metadata_dict(
+                published_record,
+                ODPMetadataSchema.SAEON_DATACITE4,
+            )
             for subject_obj in datacite_metadata.get('subjects', ()):
                 _add_keyword(subject_obj.get('subject', ''))
 
@@ -245,9 +284,19 @@ class SAEONCatalog(Catalog):
     def _get_metadata_dict(
             published_record: PublishedSAEONRecordModel,
             schema_id: ODPMetadataSchema,
-    ) -> Optional[dict]:
-        return next((
+    ) -> dict:
+        metadata = next((
             metadata_record.metadata
             for metadata_record in published_record.metadata_records
             if metadata_record.schema_id == schema_id
         ), None)
+
+        if metadata is None:
+            logger.warning(
+                "No metadata record found for schema %s on published record %s",
+                schema_id,
+                published_record.id,
+            )
+            return {}
+
+        return metadata
