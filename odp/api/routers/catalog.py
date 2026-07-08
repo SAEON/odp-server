@@ -482,7 +482,11 @@ def metadata_bundle(
         catalog_url = None
         if resolved_referer:
             parsed = urlparse(resolved_referer)
-            catalog_url = f"{parsed.scheme}://{parsed.netloc}"
+            catalog_index = parsed.path.find('/catalog')
+            subpath = parsed.path[:catalog_index] if catalog_index != -1 else parsed.path
+            if not subpath.endswith('/'):
+                subpath += '/'
+            catalog_url = f"{parsed.scheme}://{parsed.netloc}{subpath}"
 
         return generate_metadata_bundle(
             record_ids=body.record_ids,
