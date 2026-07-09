@@ -181,6 +181,8 @@ def generate_metadata_bundle(
                     data_file_name = resource['resourceDownload'].get('fileName', 'data_file')
                     if data_file_url and data_file_name:
                         data_file_name = _ensure_extension(data_file_name, data_file_url, None)
+                        if not os.path.splitext(data_file_name)[1]:
+                            data_file_name += '.zip'
 
                 records.append(MetadataBundleRecord(
                     folder_name=folder_name,
