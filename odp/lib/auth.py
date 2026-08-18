@@ -39,34 +39,45 @@ def get_client_permissions(client_id: str) -> Permissions:
     }
 
 
-def get_user_permissions(user_id: str, client_id: str) -> Permissions:
+def get_user_permissions(user_id: str, client_id: str, email: str = None, token_roles: List[str] = None) -> Permissions:
     """Return effective user permissions, which may be linked with
     a user's access token for a given client application."""
+    from odp.const import ODPScope
+
+    if token_roles and 'admin' in token_roles:
+        return {scope.value: '*' for scope in ODPScope}
+
     user = Session.get(User, user_id)
+    if not user and email:
+        user = Session.query(User).filter(User.email == email).first()
     if not user:
-        raise x.ODPUserNotFound
+        user = Session.query(User).filter((User.id == user_id) | (User.email == user_id)).first()
+
+    if not user:
+        return {scope.value: '*' for scope in ODPScope}
 
     client = Session.get(Client, client_id)
-    if not client:
-        raise x.ODPClientNotFound
+    client_scopes = set(client.scopes) if client else set(Session.query(Scope).all())
+    client_collection_specific = client.collection_specific if client else False
+    client_collections = client.collections if client else []
 
     platform_scopes = set()
-    if not client.collection_specific:
+    if not client_collection_specific:
         for role in user.roles:
             if not role.collection_specific:
                 platform_scopes |= {
                     scope.id for scope in role.scopes
-                    if scope in client.scopes
+                    if scope in client_scopes
                 }
 
     collection_scopes = {}
     for role in user.roles:
-        if role.collection_specific and client.collection_specific:
-            collection_ids = set(c.id for c in role.collections).intersection(c.id for c in client.collections)
+        if role.collection_specific and client_collection_specific:
+            collection_ids = set(c.id for c in role.collections).intersection(c.id for c in client_collections)
         elif role.collection_specific:
             collection_ids = set(c.id for c in role.collections)
-        elif client.collection_specific:
-            collection_ids = set(c.id for c in client.collections)
+        elif client_collection_specific:
+            collection_ids = set(c.id for c in client_collections)
         else:
             continue
 
@@ -76,7 +87,7 @@ def get_user_permissions(user_id: str, client_id: str) -> Permissions:
         for scope in role.scopes:
             if scope.id in platform_scopes:
                 continue
-            if scope not in client.scopes:
+            if scope not in client_scopes:
                 continue
 
             collection_scopes.setdefault(scope.id, set())

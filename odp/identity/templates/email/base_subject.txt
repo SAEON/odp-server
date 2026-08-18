@@ -1,8 +1,0 @@
-{%- if brand == 'nccrd' -%}
-National Climate Change Response Database
-{%- elif brand == 'sadco' -%}
-Southern African Data Centre for Oceanography
-{%- else -%}
-SAEON Open Data Platform
-{%- endif -%}
-: {% block subject -%}{%- endblock -%}

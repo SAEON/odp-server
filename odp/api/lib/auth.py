@@ -16,10 +16,12 @@ from odp.const.db import ScopeType, TagType
 from odp.db import Session
 from odp.db.models import CollectionTag, RecordTag, Scope, Tag, Vocabulary
 from odp.lib.auth import get_client_permissions, get_user_permissions
-from odp.lib.hydra import HydraAdminAPI, OAuth2TokenIntrospection
+from odp.lib.keycloak import JWTVerifier, KeycloakAdminAPI
 
-hydra_admin_api = HydraAdminAPI(config.HYDRA.ADMIN.URL)
-hydra_public_url = config.HYDRA.PUBLIC.URL
+auth_url = str(getattr(config, 'AUTH', getattr(config, 'HYDRA', None)).URL).rstrip('/')
+jwks_url = f"{auth_url}/protocol/openid-connect/certs"
+jwt_verifier = JWTVerifier(jwks_url)
+keycloak_admin_api = KeycloakAdminAPI(auth_url)
 
 
 @dataclass
@@ -38,9 +40,7 @@ def _authorize_request(request: Request, required_scope_id: str) -> Authorized:
             headers={'WWW-Authenticate': 'Bearer'},
         )
 
-    token: OAuth2TokenIntrospection = hydra_admin_api.introspect_token(
-        access_token, [required_scope_id],
-    )
+    token = jwt_verifier.verify_token(access_token)
     if not token.active:
         raise HTTPException(HTTP_403_FORBIDDEN)
 
@@ -58,7 +58,7 @@ def _authorize_request(request: Request, required_scope_id: str) -> Authorized:
         )
 
     # user-initiated API call
-    user_permissions = get_user_permissions(token.sub, token.client_id)
+    user_permissions = get_user_permissions(token.sub, token.client_id, email=token.email)
     if required_scope_id not in user_permissions:
         raise HTTPException(HTTP_403_FORBIDDEN)
 
@@ -75,7 +75,7 @@ class BaseAuthorize(SecurityBase):
         # OpenAPI docs / Swagger auth
         self.scheme_name = 'ODP API Authorization'
         self.model = OAuth2(flows=OAuthFlows(clientCredentials=OAuthFlowClientCredentials(
-            tokenUrl=f'{hydra_public_url}/oauth2/token',
+            tokenUrl=f'{auth_url}/protocol/openid-connect/token',
             scopes={s.value: s.value for s in ODPScope},
         )))
 
