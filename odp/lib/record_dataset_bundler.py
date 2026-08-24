@@ -42,6 +42,7 @@ def create_safe_folder_name(doi: str, title: str, max_length: int = 200) -> str:
     record.
     """
     safe_doi = _sanitize_name_part(doi)
+    title='Dataset'
     safe_title = _sanitize_name_part(title)
 
     if safe_doi and safe_title:
@@ -86,7 +87,7 @@ def log_bundle_download_audit(record_ids, dois, user_data, file_size, failed_rec
     is_single = len(record_ids) == 1
 
     download_type = 'single_record' if is_single else 'zip_bundle'
-    doi_data = {'doi': dois[0], 'record_id': record_ids[0]} if is_single else {'record_ids': record_ids, 'dois': dois}
+    doi_data = {'doi': dois[0] if dois else None, 'record_id': record_ids[0] if record_ids else None} if is_single else {'record_ids': record_ids, 'dois': dois}
 
     audit_meta = {
         'name': user_data.get('name'),
@@ -144,15 +145,22 @@ def generate_metadata_bundle(
             select(CatalogRecord)
             .where(CatalogRecord.published.is_(True))
             .where(CatalogRecord.record_id.in_(record_ids))
-            .where(CatalogRecord.catalog_id == ODPCatalog.DATACITE)
         )
         catalog_records = session.execute(stmt).scalars().all()
 
-        found_ids = {rec.record_id for rec in catalog_records}
+        # Deduplicate with priority (DataCite > MIMS)
+        unique_catalog_records = {}
+        for rec in catalog_records:
+            if rec.record_id not in unique_catalog_records:
+                unique_catalog_records[rec.record_id] = rec
+            elif rec.catalog_id == ODPCatalog.DATACITE:
+                unique_catalog_records[rec.record_id] = rec
+
+        found_ids = set(unique_catalog_records.keys())
         for missing_id in set(record_ids) - found_ids:
             failed_records.append({'doi': missing_id, 'reason': 'not_found_or_not_published'})
 
-        for catalog_record in catalog_records:
+        for catalog_record in unique_catalog_records.values():
             try:
                 pub_rec = catalog_record.published_record
                 metadata = _extract_metadata(pub_rec)
@@ -169,18 +177,42 @@ def generate_metadata_bundle(
                 )
                 folder_name = create_safe_folder_name(doi, raw_title)
 
+                # Flatten the MIMS-no doi descriptiveKeywords into a simple list for the PDF generator --(No DOI keywords missing)
+                if 'descriptiveKeywords' in metadata and isinstance(metadata['descriptiveKeywords'], list):
+                    metadata['keywords'] = [
+                        k.get('keyword') for k in metadata['descriptiveKeywords'] if k.get('keyword')
+                    ]
+
                 record_metadata = adapt_metadata(metadata)
                 pdf_buffer = generate_pdf(record_metadata)
                 pdf_b64 = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
 
-                resource = metadata.get('immutableResource')
                 data_file_url = None
                 data_file_name = None
+                resource = metadata.get('immutableResource')
+                
+                # 1. Try DataCite Format
                 if resource and 'resourceDownload' in resource:
                     data_file_url = resource['resourceDownload'].get('downloadURL')
-                    data_file_name = resource['resourceDownload'].get('fileName', 'data_file')
-                    if data_file_url and data_file_name:
-                        data_file_name = _ensure_extension(data_file_name, data_file_url, None)
+                    data_file_name = resource['resourceDownload'].get('fileName', 'data')
+                
+                # 2. Try MIMS Format (Fallback) -- no doi 
+                elif 'onlineResources' in metadata:
+                    for online_res in metadata['onlineResources']:
+                        if online_res.get('name') == 'Accession' and 'linkage' in online_res:
+                            data_file_url = online_res['linkage']
+                            formats = metadata.get('distributionFormats', [])
+                            ext = f".{formats[0].get('formatName', 'zip')}" if formats else ".zip"
+                            safe_file_base = _sanitize_name_part(catalog_record.record_id)
+                            data_file_name = f"{safe_file_base}{ext}"
+                            break
+
+                # 3. Ensure extensions and handle zip fallbacks
+                if data_file_url and data_file_name:
+                    data_file_name = _ensure_extension(data_file_name, data_file_url, None)
+                    if not os.path.splitext(data_file_name)[1]:
+                        safe_doi = doi.replace('/', '_')
+                        data_file_name = f"{safe_doi}.zip"
 
                 records.append(MetadataBundleRecord(
                     folder_name=folder_name,
