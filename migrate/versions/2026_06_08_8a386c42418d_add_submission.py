@@ -1,7 +1,7 @@
 """add_submission
 
 Revision ID: 8a386c42418d
-Revises: df57d06e1ee5
+Revises: b7dd3a950ed5
 Create Date: 2026-06-08 09:42:45.759309
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '8a386c42418d'
-down_revision = 'df57d06e1ee5'
+down_revision = 'b7dd3a950ed5'
 branch_labels = None
 depends_on = None
 
@@ -28,6 +28,7 @@ def upgrade():
     sa.Column('data', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('status', submission_status, nullable=False),
     sa.Column('dataset_file_name', sa.String(), nullable=True),
+    sa.Column('dataset_url', sa.String(), nullable=True),
     sa.Column('timestamp', sa.TIMESTAMP(timezone=True), nullable=True),
     sa.Column('collection_id', sa.String(), nullable=True),
     sa.Column('schema_id', sa.String(), nullable=True),
