@@ -161,7 +161,7 @@ async def dataset_upload(
     if not temp_dir.exists():
         temp_dir.mkdir(parents=True, exist_ok=True)
 
-    local_path_to_file = temp_dir / file.filename
+    local_path_to_file = temp_dir / Path(file.filename).name
 
     try:
         with open(local_path_to_file, "wb") as buffer:
@@ -287,9 +287,6 @@ async def admin_get_submission(
 ):
     if not (submission := Session.get(Submission, submission_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
-
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
 
     return submission
 

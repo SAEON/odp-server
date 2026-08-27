@@ -25,7 +25,7 @@ def upload_file_to_nextcloud(local_path_to_file, folder_name, file_name):
                 webdav_url,
                 data=f,
                 auth=(config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD),
-                verify=False
+                verify=True
             )
 
         if response.status_code == 201 or response.status_code == 204:
@@ -46,7 +46,7 @@ def delete_folder_from_nextcloud(folder_name):
     auth = (config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD)
 
     try:
-        requests.delete(folder_url, auth=auth, verify=False)
+        requests.delete(folder_url, auth=auth, verify=True)
     except requests.exceptions.RequestException as e:
         logger.error(f"Error deleting folder: {e}")
 
@@ -61,5 +61,5 @@ def _clear_and_create_folder(folder_name):
         "MKCOL",
         folder_url,
         auth=(config.NEXTCLOUD.USER, config.NEXTCLOUD.PASSWORD),
-        verify=False
+        verify=True
     )
