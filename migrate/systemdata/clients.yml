@@ -27,6 +27,9 @@ ODP.Web.UI:
   scopes:
     - odp.record:read
     - odp.token:read
+    - odp.submission:read
+    - odp.submission:write
+    - odp.submission:delete
     - openid
     - offline_access
   grant_types:
