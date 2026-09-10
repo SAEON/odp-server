@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Iterator
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from odp.const.db import SchemaType
 from odp.db import Session
 from odp.db.models import Catalog, CatalogRecord, Schema
 
+logger = logging.getLogger(__name__)
 
 class MIMSCatalog(SAEONCatalog):
 
@@ -82,7 +84,6 @@ class MIMSCatalog(SAEONCatalog):
                 metadata=self._create_ris_metadata(published_record, mims_catalog)
             )
         ]
-
         return published_record
 
     def _create_jsonld_metadata(
@@ -162,6 +163,8 @@ class MIMSCatalog(SAEONCatalog):
         property with an RIS-format citation."""
 
         def handle_resource_type(resource_type) -> str:
+            if not resource_type:
+                return "TY  - GEN\n"
             meta_resource_type: str = resource_type.get('resourceTypeGeneral')
             # Set the mapped resource type to GEN (Generic) by default
             mapped_resource_type: str = resource_type_mapping.get(meta_resource_type, 'GEN')
@@ -184,6 +187,11 @@ class MIMSCatalog(SAEONCatalog):
                 if description.get('descriptionType') == 'Abstract':
                     return f"AB  - {description.get('description')}\n"
             return ''
+
+        def handle_publisher(publisher) -> str:
+            if isinstance(publisher, dict):
+                publisher = publisher.get('name') or publisher.get('organizationName')
+            return f"PB  - {publisher}\n" if publisher else ''
 
         resource_type_mapping: dict = {
             'Audiovisual': 'ADVS',
@@ -208,7 +216,7 @@ class MIMSCatalog(SAEONCatalog):
             'creators': handle_creators,
             'descriptions': handle_abstract,
             'doi': lambda doi: f"DO  - {doi}\n",
-            'publisher': lambda publisher: f"PB  - {publisher}\n",
+            'publisher': handle_publisher,
             'publicationYear': lambda publish_year: f"PY  - {publish_year}\n",
             'language': lambda language: f"LA  - {language}\n",
         }
@@ -263,9 +271,13 @@ class MIMSCatalog(SAEONCatalog):
             'place': 'Location',
             'stratum': 'Instrument',
         }
+        iso19115_metadata = next((
+            metadata_record.metadata
+            for metadata_record in published_record.metadata_records
+            if metadata_record.schema_id == ODPMetadataSchema.SAEON_ISO19115
+        ), None)
 
-        # Process ISO19115 keywords if available
-        if iso19115_metadata := self._get_metadata_dict(published_record, ODPMetadataSchema.SAEON_ISO19115):
+        if iso19115_metadata:
             for keyword_obj in iso19115_metadata.get('descriptiveKeywords', ()):
                 keyword = keyword_obj.get('keyword', '')
                 keyword_type = keyword_obj.get('keywordType')

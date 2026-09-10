@@ -1,3 +1,4 @@
+import logging
 from jschon import JSON, URI
 
 from odp.api.models import PublishedDataCiteRecordModel, PublishedRecordModel, RecordModel
@@ -10,6 +11,7 @@ from odp.db.models import CatalogRecord, Schema
 from odp.lib.datacite import DataciteClient, DataciteRecordIn
 from odp.lib.schema import schema_catalog
 
+logger = logging.getLogger(__name__)
 
 class DataCiteCatalog(Catalog):
     external = True
@@ -52,6 +54,12 @@ class DataCiteCatalog(Catalog):
             result = iso19115_schema.evaluate(JSON(record_model.metadata))
             datacite_metadata = result.output('translation', scheme='saeon/datacite4', ignore_validity=True)
 
+        elif record_model.schema_id == ODPMetadataSchema.SAEON_EML:
+            schema = Session.get(Schema, (record_model.schema_id, SchemaType.metadata))
+            eml_schema = schema_catalog.get_schema(URI(schema.uri))
+            result = eml_schema.evaluate(JSON(record_model.metadata))
+            datacite_metadata = result.output('translation', scheme='saeon/datacite4', ignore_validity=True)
+
         else:
             raise NotImplementedError
 
@@ -74,7 +82,15 @@ class DataCiteCatalog(Catalog):
     def sync_external_record(self, record_id: str) -> None:
         """Create / update / delete a record on the DataCite platform."""
         catalog_record = Session.get(CatalogRecord, (self.catalog_id, record_id))
+
+        # Determine environment name for accurate logging
+        is_test = 'test' in config.DATACITE.API_URL.lower()
+        env_name = "DataCite Sandbox" if is_test else "DataCite Production"
+
         if catalog_record.published:
+            doi = catalog_record.published_record.get('doi')
+            logger.info(f"Syncing DOI {doi} to {env_name}")
             self.datacite.publish_doi(DataciteRecordIn(**catalog_record.published_record))
         elif doi := catalog_record.record.doi:
+            logger.info(f"Unpublishing DOI {doi} from {env_name}")
             self.datacite.unpublish_doi(doi)
