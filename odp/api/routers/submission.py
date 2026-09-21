@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 def submission_list_item_model(submission: Submission) -> SubmissionListItemModel:
     return SubmissionListItemModel(
         id=submission.id,
-        title=submission.data.get('title'),
+        title=(submission.data or {}).get('title') or '',
         status=submission.status
     )
 
