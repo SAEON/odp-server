@@ -1,6 +1,7 @@
 from typing import Optional
 
-from odp.api.models import PublishedDataCiteRecordModel, PublishedRecordModel, PublishedSAEONRecordModel, TagInstanceModel
+from odp.api.models import PublishedDataCiteRecordModel, PublishedRecordModel, PublishedSAEONRecordModel, \
+    TagInstanceModel
 from odp.const import ODPCatalog
 from odp.db.models import CatalogRecord, CollectionTag, RecordTag
 
@@ -36,3 +37,21 @@ def output_published_record_model(catalog_record: CatalogRecord) -> Optional[Pub
 
     if catalog_record.catalog_id == ODPCatalog.DATACITE:
         return PublishedDataCiteRecordModel(**catalog_record.published_record)
+
+
+def remove_empty_elements(data):
+    """
+    Recursively removes None, empty strings, empty lists, and empty dicts.
+    """
+    if isinstance(data, dict):
+        return {
+            k: v for k, v in ((k, remove_empty_elements(v)) for k, v in data.items())
+            if v not in (None, [], {}, "")
+        }
+    elif isinstance(data, list):
+        return [
+            v for v in (remove_empty_elements(v) for v in data)
+            if v not in (None, [], {}, "")
+        ]
+    else:
+        return data

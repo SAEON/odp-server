@@ -2,14 +2,20 @@ import re
 from datetime import datetime, timezone
 from random import choice, randint
 
+from jschon import JSON, JSONPatch, JSONSchemaError, URI
+
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 from faker import Faker
 
+from odp.const.db import SubmissionStatus
+from odp.const import ODPScope, ODPMetadataSchema
+from odp.lib.schema import schema_catalog as catalog
 from odp.db import Session
-from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role, Schema, Scope, Tag, User,
-                           Vocabulary, VocabularyTerm)
+from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role,
+                           Submission, Schema, Scope, Tag, User, Vocabulary, VocabularyTerm)
 from test import datacite4_example, iso19115_example, eml_example
+
 fake = Faker()
 
 
@@ -333,6 +339,11 @@ class RoleFactory(ODPModelFactory):
                 Session.commit()
 
 
+def load_submission_example_fixture():
+    return catalog.load_json(
+        URI('https://odp.saeon.ac.za/schema/metadata/saeon/data-submission-example'))
+
+
 class DownloadAuditFactory(ODPModelFactory):
     class Meta:
         model = DownloadAudit
@@ -351,3 +362,26 @@ class DownloadAuditFactory(ODPModelFactory):
         'organisation': fake.company(),
         'download_type': choice(('single_record', 'zip_bundle')),
     })
+
+
+class SubmissionFactory(ODPModelFactory):
+    class Meta:
+        model = Submission
+
+    user_id = factory.Faker('uuid4')
+    status = factory.LazyFunction(lambda: choice(list(SubmissionStatus)))
+    dataset_file_name = factory.LazyFunction(
+        lambda: f'{factory.Faker("word")}.zip' if randint(0, 1) else None)
+    timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    collection = factory.SubFactory(CollectionFactory)
+    record = factory.SubFactory(RecordFactory)
+    schema_id = factory.LazyFunction(lambda: choice([
+        ODPMetadataSchema.SAEON_DATACITE4.value,
+        ODPMetadataSchema.SAEON_ISO19115.value
+    ]))
+    doi = factory.Sequence(lambda n: f"10.15493/example-saeon-submission-{n}")
+
+    @factory.lazy_attribute
+    def data(self):
+        return load_submission_example_fixture()
+

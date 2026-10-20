@@ -41,6 +41,7 @@ class Vocabulary(Base):
     scope_type = Column(Enum(ScopeType), nullable=False)
     scope = relationship('Scope')
 
+
     # if static, terms are maintained by the system
     static = Column(Boolean, nullable=False, server_default='false')
 

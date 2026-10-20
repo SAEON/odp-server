@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from odp.api.routers import catalog, client, collection, provider, record, role, schema, scope, status, tag, token, user, vocabulary, download
+from odp.api.routers import catalog, client, collection, provider, record, role, schema, scope, status, tag, token, user, vocabulary, submission, download
 from odp.config import config
 from odp.db import Session
 from odp.version import VERSION
@@ -28,6 +28,7 @@ app.include_router(tag.router, prefix='/tag', tags=['Tag'])
 app.include_router(token.router, prefix='/token', tags=['Token'])
 app.include_router(user.router, prefix='/user', tags=['User'])
 app.include_router(vocabulary.router, prefix='/vocabulary', tags=['Vocabulary'])
+app.include_router(submission.router, prefix='/submission', tags=['Submission'])
 app.include_router(download.router, prefix='/download', tags=['Download'])
 
 app.add_middleware(
