@@ -2,7 +2,7 @@ from sqlalchemy import Boolean, CheckConstraint, Column, Enum, ForeignKey, Forei
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from odp.const.db import AuditCommand, SchemaType, ScopeType
+from odp.const.db import AuditCommand, SchemaType
 from odp.db import Base
 
 
@@ -21,14 +21,6 @@ class Vocabulary(Base):
             f"schema_type = '{SchemaType.vocabulary}'",
             name='vocabulary_schema_type_check',
         ),
-        ForeignKeyConstraint(
-            ('scope_id', 'scope_type'), ('scope.id', 'scope.type'),
-            name='vocabulary_scope_fkey', ondelete='RESTRICT',
-        ),
-        CheckConstraint(
-            f"scope_type = '{ScopeType.odp}'",
-            name='vocabulary_scope_type_check',
-        ),
     )
 
     id = Column(String, primary_key=True)
@@ -38,9 +30,6 @@ class Vocabulary(Base):
     schema = relationship('Schema')
 
     scope_id = Column(String, nullable=False)
-    scope_type = Column(Enum(ScopeType), nullable=False)
-    scope = relationship('Scope')
-
 
     # if static, terms are maintained by the system
     static = Column(Boolean, nullable=False, server_default='false')
@@ -73,6 +62,7 @@ class VocabularyTermAudit(Base):
     id = Column(Integer, Identity(), primary_key=True)
     client_id = Column(String, nullable=False)
     user_id = Column(String)
+    user_name = Column(String)
     command = Column(Enum(AuditCommand), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 

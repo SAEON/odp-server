@@ -29,9 +29,6 @@ def create_new_record(
         auth: Authorized,
         ignore_collection_tags: bool = False,
 ) -> RecordModel:
-    if auth.collection_ids != '*' and record_in.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not ignore_collection_tags and Session.execute(
             select(CollectionTag).
                     where(CollectionTag.collection_id == record_in.collection_id).
@@ -142,6 +139,7 @@ def create_audit_record(
     RecordAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=timestamp,
         _id=record.id,
@@ -217,9 +215,6 @@ def set_record(
         auth: Authorized,
         ignore_collection_tags: bool = False,
 ) -> RecordModel:
-    if not create and auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not ignore_collection_tags and Session.execute(
         select(CollectionTag).
         where(CollectionTag.collection_id == record_in.collection_id).
@@ -290,12 +285,14 @@ def create_tag_audit_record(
     RecordTagAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=timestamp,
         _id=record_tag.id,
         _record_id=record_tag.record_id,
         _tag_id=record_tag.tag_id,
         _user_id=record_tag.user_id,
+        _user_name=record_tag.user_name,
         _data=record_tag.data,
     ).save()
 
@@ -307,9 +304,6 @@ def delete_record_(
 ) -> None:
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
-
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
 
     if not ignore_collection_tags and Session.execute(
             select(CollectionTag).
@@ -342,9 +336,6 @@ def untag_record_(
 ) -> None:
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
-
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
 
     if not (record_tag := Session.execute(
             select(RecordTag).

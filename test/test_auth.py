@@ -1,268 +1,104 @@
-from odp.lib.auth import Permissions, UserInfo, get_client_permissions, get_user_info, get_user_permissions
-from test.factories import ClientFactory, CollectionFactory, RoleFactory, ScopeFactory, UserFactory
+import time
+
+import pytest
+from authlib.jose import JsonWebKey, JsonWebToken, KeySet
+
+import odp.lib.auth
+from odp.lib.auth import (
+    Authorized,
+    TokenVerificationError,
+    decode_and_verify_token,
+    resolve_authorized,
+)
 
 
-def assert_compare(expected: Permissions, actual: Permissions):
-    """Compare expected and actual permissions results. The order of
-    collection ids does not matter."""
-    if expected == actual:
-        return
+@pytest.fixture
+def test_jwk():
+    return JsonWebKey.generate_key('RSA', 2048, is_private=True, options={'kid': 'test-key-1'})
 
-    expected = {
-        scope_id: set(collection_ids) if collection_ids != '*' else '*'
-        for scope_id, collection_ids in expected.items()
+
+@pytest.fixture
+def mock_jwks(monkeypatch, test_jwk):
+    key_set = KeySet([test_jwk])
+    monkeypatch.setattr(odp.lib.auth, 'get_jwks', lambda auth_url=None, force_refresh=False: key_set)
+    return test_jwk
+
+
+def _sign_token(jwk, payload: dict) -> str:
+    jwt = JsonWebToken(['RS256'])
+    header = {'alg': 'RS256', 'kid': 'test-key-1'}
+    return jwt.encode(header, payload, jwk).decode('utf-8')
+
+
+def test_decode_and_verify_valid_token(mock_jwks):
+    now = int(time.time())
+    payload = {
+        'sub': 'user-123',
+        'azp': 'ODP.Web.UI',
+        'name': 'Jane Researcher',
+        'email': 'jane@saeon.ac.za',
+        'roles': ['odp.record:read', 'odp.submission:write'],
+        'scope': 'openid odp.record:read',
+        'iat': now,
+        'exp': now + 300,
     }
-    actual = {
-        scope_id: set(collection_ids) if collection_ids != '*' else '*'
-        for scope_id, collection_ids in actual.items()
+    token = _sign_token(mock_jwks, payload)
+    claims = decode_and_verify_token(token)
+    assert claims['sub'] == 'user-123'
+    assert claims['email'] == 'jane@saeon.ac.za'
+
+
+def test_decode_and_verify_expired_token(mock_jwks):
+    now = int(time.time())
+    payload = {
+        'sub': 'user-123',
+        'iat': now - 600,
+        'exp': now - 300,
     }
-    assert expected == actual
+    token = _sign_token(mock_jwks, payload)
+    with pytest.raises(TokenVerificationError):
+        decode_and_verify_token(token)
 
 
-def test_platform_roles():
-    """Test permissions calculations for 'platform' (not collection-specific) roles.
+def test_decode_and_verify_invalid_token(mock_jwks):
+    with pytest.raises(TokenVerificationError):
+        decode_and_verify_token('not-a-valid-jwt')
 
-    The client is not collection-specific. Any client-collection and role-collection
-    associations should be ignored.
 
-    The expected user permissions result contains the intersection of client and
-    role scopes, with a value of '*' for each scope.
-    """
-    scopes = ScopeFactory.create_batch(8, type='odp')
-    client = ClientFactory(scopes=scopes[1:7], collection_specific=False, collections=[CollectionFactory()])
-    role1 = RoleFactory(scopes=scopes[:3], collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(scopes=scopes[5:], collection_specific=False, collections=[CollectionFactory()])
-    user = UserFactory(roles=(role1, role2))
-
-    actual_user_perm = get_user_permissions(user.id, client.id)
-    expected_user_perm = {
-        scope.id: '*'
-        for n, scope in enumerate(scopes)
-        if n in (1, 2, 5, 6)
+def test_resolve_authorized_human_user_intersection():
+    """Effective scopes should be the intersection of user roles and client scopes."""
+    claims = {
+        'sub': 'user-uuid-1',
+        'azp': 'ODP.Web.UI',
+        'name': 'Dylan Pivo',
+        'email': 'dylanpivo@gmail.com',
+        'preferred_username': 'dylanpivo@gmail.com',
+        'roles': ['odp.record:read', 'odp.record:admin', 'odp.token:read'],
+        'scope': 'openid odp.record:read odp.token:read odp.submission:write',
     }
-    assert_compare(expected_user_perm, actual_user_perm)
-
-    actual_client_perm = get_client_permissions(client.id)
-    expected_client_perm = {
-        scope.id: '*'
-        for scope in scopes[1:7]
-    }
-    assert_compare(expected_client_perm, actual_client_perm)
-
-
-def test_collection_roles():
-    """Test permissions calculations for collection-specific roles.
-
-    The client is not collection-specific. Any client-collection associations
-    should be ignored.
-
-    The expected user permissions result contains the intersection of client and
-    role scopes, with the value for each scope being the set of applicable role
-    collections.
-    """
-    scopes = ScopeFactory.create_batch(8, type='odp')
-    client = ClientFactory(scopes=scopes[1:7], collection_specific=False, collections=[CollectionFactory()])
-    role1 = RoleFactory(scopes=scopes[:5], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role2 = RoleFactory(scopes=scopes[3:], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    user = UserFactory(roles=(role1, role2))
-
-    actual_user_perm = get_user_permissions(user.id, client.id)
-    expected_user_perm = {
-                             scope.id: [c.id for c in role1.collections]
-                             for n, scope in enumerate(scopes)
-                             if n in (1, 2)
-                         } | {
-                             scope.id: [c.id for c in role1.collections] + [c.id for c in role2.collections]
-                             for n, scope in enumerate(scopes)
-                             if n in (3, 4)
-                         } | {
-                             scope.id: [c.id for c in role2.collections]
-                             for n, scope in enumerate(scopes)
-                             if n in (5, 6)
-                         }
-    assert_compare(expected_user_perm, actual_user_perm)
-
-    actual_client_perm = get_client_permissions(client.id)
-    expected_client_perm = {
-        scope.id: '*'
-        for scope in scopes[1:7]
-    }
-    assert_compare(expected_client_perm, actual_client_perm)
-
-
-def test_platform_collection_role_mix():
-    """Test permissions calculations for a mix of platform and collection-specific roles.
-
-    The client is not collection-specific. Any client-collection associations - and
-    role-collection associations for platform roles - should be ignored.
-
-    The expected user permissions result contains the intersection of client and
-    role scopes, with a value of '*' for scopes allowed by platform roles, and the
-    set of applicable role collections for remaining scopes allowed by collection-specific
-    roles.
-    """
-    scopes = ScopeFactory.create_batch(8, type='odp')
-    client = ClientFactory(scopes=scopes[1:7], collection_specific=False, collections=[CollectionFactory()])
-    role1 = RoleFactory(scopes=scopes[:4], collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(scopes=scopes[3:], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role3 = RoleFactory(scopes=scopes[5:], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    user = UserFactory(roles=(role1, role2, role3))
-
-    actual_user_perm = get_user_permissions(user.id, client.id)
-    expected_user_perm = {
-                             scope.id: '*'
-                             for n, scope in enumerate(scopes)
-                             if n in (1, 2, 3)
-                         } | {
-                             scope.id: [c.id for c in role2.collections]
-                             for n, scope in enumerate(scopes)
-                             if n == 4
-                         } | {
-                             scope.id: [c.id for c in role2.collections] + [c.id for c in role3.collections]
-                             for n, scope in enumerate(scopes)
-                             if n in (5, 6)
-                         }
-    assert_compare(expected_user_perm, actual_user_perm)
-
-    actual_client_perm = get_client_permissions(client.id)
-    expected_client_perm = {
-        scope.id: '*'
-        for scope in scopes[1:7]
-    }
-    assert_compare(expected_client_perm, actual_client_perm)
-
-
-def test_collection_client():
-    """Test permissions calculations for a collection-specific client.
-
-    The roles are not collection-specific. Any role-collection associations
-    should be ignored.
-
-    The expected user permissions result contains the intersection of client and
-    role scopes, with the value for each scope being the set of client collections.
-    """
-    scopes = ScopeFactory.create_batch(8, type='odp')
-    client = ClientFactory(scopes=scopes[1:7], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role1 = RoleFactory(scopes=scopes[:3], collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(scopes=scopes[5:], collection_specific=False, collections=[CollectionFactory()])
-    user = UserFactory(roles=(role1, role2))
-
-    actual_user_perm = get_user_permissions(user.id, client.id)
-    expected_user_perm = {
-        scope.id: [c.id for c in client.collections]
-        for n, scope in enumerate(scopes)
-        if n in (1, 2, 5, 6)
-    }
-    assert_compare(expected_user_perm, actual_user_perm)
-
-    actual_client_perm = get_client_permissions(client.id)
-    expected_client_perm = {
-        scope.id: [c.id for c in client.collections]
-        for scope in scopes[1:7]
-    }
-    assert_compare(expected_client_perm, actual_client_perm)
-
-
-def test_collection_client_platform_collection_role_mix():
-    """Test permissions calculations for a collection-specific client, with a mix
-    of platform and collection-specific roles.
-
-    Any role-collection associations for platform roles should be ignored.
-
-    The expected user permissions result contains the intersection of client and
-    role scopes, with the value for each scope being the set of client collections
-    for scopes allowed by platform roles, and the intersection of client and role
-    collections for remaining scopes allowed by collection-specific roles. If the
-    latter intersection is empty, the scope should not appear in the result.
-    """
-    scopes = ScopeFactory.create_batch(8, type='odp')
-    client = ClientFactory(scopes=scopes[1:7], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role1 = RoleFactory(scopes=scopes[:3], collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(scopes=scopes[3:5], collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role3 = RoleFactory(scopes=scopes[5:], collection_specific=True, collections=client.collections[1:] + [CollectionFactory()])
-    user = UserFactory(roles=(role1, role2, role3))
-
-    actual_user_perm = get_user_permissions(user.id, client.id)
-    expected_user_perm = {
-                             scope.id: [c.id for c in client.collections]
-                             for n, scope in enumerate(scopes)
-                             if n in (1, 2)
-                         } | {
-                             scope.id: [c.id for c in client.collections[1:]]
-                             for n, scope in enumerate(scopes)
-                             if n in (5, 6)
-                         }
-    assert_compare(expected_user_perm, actual_user_perm)
-
-    actual_client_perm = get_client_permissions(client.id)
-    expected_client_perm = {
-        scope.id: [c.id for c in client.collections]
-        for scope in scopes[1:7]
-    }
-    assert_compare(expected_client_perm, actual_client_perm)
-
-
-def test_user_info():
-    """Test user info result with non-collection-specific client and roles."""
-    client = ClientFactory(collection_specific=False, collections=[CollectionFactory()])
-    role1 = RoleFactory(collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(collection_specific=False, collections=[CollectionFactory()])
-    user = UserFactory(roles=(role1, role2))
-
-    actual_user_info = get_user_info(user.id, client.id)
-    expected_user_info = UserInfo(
-        sub=user.id,
-        email=user.email,
-        email_verified=user.verified,
-        name=user.name,
-        picture=None,
-        roles=[role1.id, role2.id],
+    auth = resolve_authorized(claims)
+    assert auth == Authorized(
+        client_id='ODP.Web.UI',
+        user_id='user-uuid-1',
+        user_name='Dylan Pivo',
+        scopes={'odp.record:read', 'odp.token:read'},
     )
-    assert expected_user_info == actual_user_info
 
 
-def test_user_info_collection_roles():
-    """Test user info result with a non-collection-specific client and a mix
-    of platform and collection-specific roles."""
-    client = ClientFactory(collection_specific=False, collections=[CollectionFactory()])
-    role1 = RoleFactory(collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role3 = RoleFactory(collection_specific=True, collections=CollectionFactory.create_batch(3))
-    user = UserFactory(roles=(role1, role2, role3))
-
-    actual_user_info = get_user_info(user.id, client.id)
-    expected_user_info = UserInfo(
-        sub=user.id,
-        email=user.email,
-        email_verified=user.verified,
-        name=user.name,
-        picture=None,
-        roles=[role1.id, role2.id, role3.id],
+def test_resolve_authorized_service_account():
+    """Service account tokens should resolve user_id=None and user_name=None."""
+    claims = {
+        'sub': 'sa-uuid-1',
+        'azp': 'ODP.Web.CI',
+        'client_id': 'ODP.Web.CI',
+        'preferred_username': 'service-account-odp.web.ci',
+        'roles': ['odp.catalog:read', 'odp.catalog:search'],
+        'scope': 'openid odp.catalog:read odp.catalog:search',
+    }
+    auth = resolve_authorized(claims)
+    assert auth == Authorized(
+        client_id='ODP.Web.CI',
+        user_id=None,
+        user_name=None,
+        scopes={'odp.catalog:read', 'odp.catalog:search'},
     )
-    assert expected_user_info == actual_user_info
-
-
-def test_user_info_collection_roles_and_client():
-    """Test user info result with a collection-specific client and a mix
-    of platform and collection-specific roles.
-
-    Collection-specific roles that do not share any collections with the
-    client should not appear in the user's role list.
-    """
-    client = ClientFactory(collection_specific=True, collections=CollectionFactory.create_batch(3))
-    role1 = RoleFactory(collection_specific=False, collections=[CollectionFactory()])
-    role2 = RoleFactory(collection_specific=True, collections=client.collections[:2])
-    role3 = RoleFactory(collection_specific=True, collections=client.collections[2:])
-    role4 = RoleFactory(collection_specific=True, collections=CollectionFactory.create_batch(3))
-    user = UserFactory(roles=(role1, role2, role3, role4))
-
-    actual_user_info = get_user_info(user.id, client.id)
-    expected_user_info = UserInfo(
-        sub=user.id,
-        email=user.email,
-        email_verified=user.verified,
-        name=user.name,
-        picture=None,
-        roles=[role1.id, role2.id, role3.id],
-    )
-    assert expected_user_info == actual_user_info

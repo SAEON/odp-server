@@ -18,7 +18,7 @@ from odp.api.models import (AuditModel, CollectionAuditModel, CollectionModel, C
 from odp.const import DOI_PREFIX, ODPScope
 from odp.const.db import AuditCommand, TagCardinality, TagType
 from odp.db import Session
-from odp.db.models import Collection, CollectionAudit, CollectionTag, CollectionTagAudit, Record, Tag, User
+from odp.db.models import Collection, CollectionAudit, CollectionTag, CollectionTagAudit, Record, Tag
 
 router = APIRouter()
 
@@ -36,8 +36,6 @@ def output_collection_model(result) -> CollectionModel:
             output_tag_instance_model(collection_tag)
             for collection_tag in result.Collection.tags
         ],
-        client_ids=[client.id for client in result.Collection.clients],
-        role_ids=[role.id for role in result.Collection.roles],
         timestamp=result.Collection.timestamp.isoformat(),
     )
 
@@ -51,6 +49,7 @@ def create_audit_record(
     CollectionAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=timestamp,
         _id=collection.id,
@@ -70,12 +69,14 @@ def create_tag_audit_record(
     CollectionTagAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=timestamp,
         _id=collection_tag.id,
         _collection_id=collection_tag.collection_id,
         _tag_id=collection_tag.tag_id,
         _user_id=collection_tag.user_id,
+        _user_name=collection_tag.user_name,
         _data=collection_tag.data,
     ).save()
 
@@ -93,8 +94,6 @@ async def list_collections(
         outerjoin(Record).
         group_by(Collection)
     )
-    if auth.collection_ids != '*':
-        stmt = stmt.where(Collection.id.in_(auth.collection_ids))
 
     return paginator.paginate(
         stmt,
@@ -111,9 +110,6 @@ async def get_collection(
         collection_id: str,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_READ)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     stmt = (
         select(Collection, func.count(Record.id)).
         outerjoin(Record).
@@ -135,9 +131,6 @@ async def create_collection(
         collection_in: CollectionModelIn,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_ADMIN)),
 ):
-    if auth.collection_ids != '*':
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if Session.execute(
             select(Collection).
             where(Collection.key == collection_in.key)
@@ -172,9 +165,6 @@ async def update_collection(
         collection_in: CollectionModelIn,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_ADMIN)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (collection := Session.get(Collection, collection_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -207,9 +197,6 @@ async def delete_collection(
         collection_id: str,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_ADMIN)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (collection := Session.get(Collection, collection_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -231,9 +218,6 @@ async def tag_collection(
         tag_schema: JSONSchema = Depends(get_tag_schema),
         auth: Authorized = Depends(TagAuthorize()),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (collection := Session.get(Collection, collection_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -281,6 +265,7 @@ async def tag_collection(
             tag_id=tag_instance_in.tag_id,
             tag_type=TagType.collection,
             user_id=auth.user_id,
+            user_name=auth.user_name,
         )
 
     if collection_tag.data != tag_instance_in.data:
@@ -288,6 +273,7 @@ async def tag_collection(
         if not validity['valid']:
             raise HTTPException(HTTP_422_UNPROCESSABLE_ENTITY, validity)
 
+        collection_tag.user_name = auth.user_name
         collection_tag.data = tag_instance_in.data
         collection_tag.timestamp = (timestamp := datetime.now(timezone.utc))
         collection_tag.save()
@@ -328,9 +314,6 @@ def _untag_collection(
         auth: Authorized,
         ignore_user_id: bool = False,
 ) -> None:
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (collection := Session.get(Collection, collection_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -360,9 +343,6 @@ async def get_new_doi(
         collection_id: str,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_READ)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (collection := Session.get(Collection, collection_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -387,9 +367,6 @@ async def get_collection_audit_log(
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_READ)),
         paginator: Paginator = Depends(partial(Paginator, sort='timestamp')),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     audit_subq = union_all(
         select(
             literal_column("'collection'").label('table'),
@@ -397,6 +374,7 @@ async def get_collection_audit_log(
             CollectionAudit.id,
             CollectionAudit.client_id,
             CollectionAudit.user_id,
+            CollectionAudit.user_name,
             CollectionAudit.command,
             CollectionAudit.timestamp
         ).where(CollectionAudit._id == collection_id),
@@ -406,15 +384,13 @@ async def get_collection_audit_log(
             CollectionTagAudit.id,
             CollectionTagAudit.client_id,
             CollectionTagAudit.user_id,
+            CollectionTagAudit.user_name,
             CollectionTagAudit.command,
             CollectionTagAudit.timestamp
         ).where(CollectionTagAudit._collection_id == collection_id)
     ).subquery()
 
-    stmt = (
-        select(audit_subq, User.name.label('user_name')).
-        outerjoin(User, audit_subq.c.user_id == User.id)
-    )
+    stmt = select(audit_subq)
 
     return paginator.paginate(
         stmt,
@@ -440,31 +416,27 @@ async def get_collection_audit_detail(
         collection_audit_id: int,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_READ)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
-    if not (row := Session.execute(
-        select(CollectionAudit, User.name.label('user_name')).
-        outerjoin(User, CollectionAudit.user_id == User.id).
+    if not (audit := Session.execute(
+        select(CollectionAudit).
         where(CollectionAudit.id == collection_audit_id).
         where(CollectionAudit._id == collection_id)
-    ).one_or_none()):
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
     return CollectionAuditModel(
         table='collection',
         tag_id=None,
-        audit_id=row.CollectionAudit.id,
-        client_id=row.CollectionAudit.client_id,
-        user_id=row.CollectionAudit.user_id,
-        user_name=row.user_name,
-        command=row.CollectionAudit.command,
-        timestamp=row.CollectionAudit.timestamp.isoformat(),
-        collection_id=row.CollectionAudit._id,
-        collection_key=row.CollectionAudit._key,
-        collection_name=row.CollectionAudit._name,
-        collection_doi_key=row.CollectionAudit._doi_key,
-        collection_provider_id=row.CollectionAudit._provider_id,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        collection_id=audit._id,
+        collection_key=audit._key,
+        collection_name=audit._name,
+        collection_doi_key=audit._doi_key,
+        collection_provider_id=audit._provider_id,
     )
 
 
@@ -477,37 +449,25 @@ async def get_collection_tag_audit_detail(
         collection_tag_audit_id: int,
         auth: Authorized = Depends(Authorize(ODPScope.COLLECTION_READ)),
 ):
-    if auth.collection_ids != '*' and collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
-    audit_user_alias = aliased(User)
-    tag_user_alias = aliased(User)
-
-    if not (row := Session.execute(
-        select(
-            CollectionTagAudit,
-            audit_user_alias.name.label('audit_user_name'),
-            tag_user_alias.name.label('tag_user_name')
-        ).
-        outerjoin(audit_user_alias, CollectionTagAudit.user_id == audit_user_alias.id).
-        outerjoin(tag_user_alias, CollectionTagAudit._user_id == tag_user_alias.id).
+    if not (audit := Session.execute(
+        select(CollectionTagAudit).
         where(CollectionTagAudit.id == collection_tag_audit_id).
         where(CollectionTagAudit._collection_id == collection_id)
-    ).one_or_none()):
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
     return CollectionTagAuditModel(
         table='collection_tag',
-        tag_id=row.CollectionTagAudit._tag_id,
-        audit_id=row.CollectionTagAudit.id,
-        client_id=row.CollectionTagAudit.client_id,
-        user_id=row.CollectionTagAudit.user_id,
-        user_name=row.audit_user_name,
-        command=row.CollectionTagAudit.command,
-        timestamp=row.CollectionTagAudit.timestamp.isoformat(),
-        collection_tag_id=row.CollectionTagAudit._id,
-        collection_tag_collection_id=row.CollectionTagAudit._collection_id,
-        collection_tag_user_id=row.CollectionTagAudit._user_id,
-        collection_tag_user_name=row.tag_user_name,
-        collection_tag_data=row.CollectionTagAudit._data,
+        tag_id=audit._tag_id,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        collection_tag_id=audit._id,
+        collection_tag_collection_id=audit._collection_id,
+        collection_tag_user_id=audit._user_id,
+        collection_tag_user_name=audit._user_name,
+        collection_tag_data=audit._data,
     )

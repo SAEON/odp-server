@@ -73,6 +73,7 @@ class RecordAudit(Base):
     id = Column(Integer, Identity(), primary_key=True)
     client_id = Column(String, nullable=False)
     user_id = Column(String)
+    user_name = Column(String)
     command = Column(Enum(AuditCommand), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
@@ -105,14 +106,14 @@ class RecordTag(Base):
     record_id = Column(String, ForeignKey('record.id', ondelete='CASCADE'), nullable=False)
     tag_id = Column(String, nullable=False)
     tag_type = Column(Enum(TagType), nullable=False)
-    user_id = Column(String, ForeignKey('user.id', ondelete='RESTRICT'))
+    user_id = Column(String)
+    user_name = Column(String)
 
     data = Column(JSONB, nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
     record = relationship('Record')
     tag = relationship('Tag')
-    user = relationship('User')
 
 
 class RecordTagAudit(Base):
@@ -123,6 +124,7 @@ class RecordTagAudit(Base):
     id = Column(Integer, Identity(), primary_key=True)
     client_id = Column(String, nullable=False)
     user_id = Column(String)
+    user_name = Column(String)
     command = Column(Enum(AuditCommand), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
@@ -130,6 +132,7 @@ class RecordTagAudit(Base):
     _record_id = Column(String, nullable=False)
     _tag_id = Column(String, nullable=False)
     _user_id = Column(String)
+    _user_name = Column(String)
     _data = Column(JSONB, nullable=False)
 
 

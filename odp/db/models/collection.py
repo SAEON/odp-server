@@ -2,7 +2,6 @@ import uuid
 
 from sqlalchemy import CheckConstraint, Column, Enum, ForeignKey, ForeignKeyConstraint, Identity, Integer, String, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import relationship
 
 from odp.const.db import AuditCommand, TagType
@@ -26,14 +25,6 @@ class Collection(Base):
     # view of associated tags (one-to-many)
     tags = relationship('CollectionTag', viewonly=True)
 
-    # view of associated roles via many-to-many role_collection relation
-    collection_roles = relationship('RoleCollection', viewonly=True)
-    roles = association_proxy('collection_roles', 'role')
-
-    # view of associated clients via many-to-many client_collection relation
-    collection_clients = relationship('ClientCollection', viewonly=True)
-    clients = association_proxy('collection_clients', 'client')
-
     _repr_ = 'id', 'key', 'name', 'doi_key', 'provider_id'
 
 
@@ -45,6 +36,7 @@ class CollectionAudit(Base):
     id = Column(Integer, Identity(), primary_key=True)
     client_id = Column(String, nullable=False)
     user_id = Column(String)
+    user_name = Column(String)
     command = Column(Enum(AuditCommand), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
@@ -75,14 +67,14 @@ class CollectionTag(Base):
     collection_id = Column(String, ForeignKey('collection.id', ondelete='CASCADE'), nullable=False)
     tag_id = Column(String, nullable=False)
     tag_type = Column(Enum(TagType), nullable=False)
-    user_id = Column(String, ForeignKey('user.id', ondelete='RESTRICT'))
+    user_id = Column(String)
+    user_name = Column(String)
 
     data = Column(JSONB, nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
     collection = relationship('Collection')
     tag = relationship('Tag')
-    user = relationship('User')
 
 
 class CollectionTagAudit(Base):
@@ -93,6 +85,7 @@ class CollectionTagAudit(Base):
     id = Column(Integer, Identity(), primary_key=True)
     client_id = Column(String, nullable=False)
     user_id = Column(String)
+    user_name = Column(String)
     command = Column(Enum(AuditCommand), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
 
@@ -100,4 +93,5 @@ class CollectionTagAudit(Base):
     _collection_id = Column(String, nullable=False)
     _tag_id = Column(String, nullable=False)
     _user_id = Column(String)
+    _user_name = Column(String)
     _data = Column(JSONB, nullable=False)

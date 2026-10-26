@@ -48,7 +48,6 @@ def static_publishing_data():
     os.environ['SAEON_CATALOG_URL'] = 'http://odp.catalog/saeon'
     os.environ['MIMS_CATALOG_URL'] = 'http://odp.catalog/mims'
     os.environ['DATACITE_CATALOG_URL'] = 'http://odp.catalog/datacite'
-    migrate.systemdata.init_system_scopes()
     migrate.systemdata.init_schemas()
     migrate.systemdata.init_vocabularies()
     migrate.systemdata.init_tags()

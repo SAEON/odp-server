@@ -13,7 +13,7 @@ from odp.api.models import VocabularyModel, VocabularyTermAuditModel, Vocabulary
 from odp.const import ODPScope
 from odp.const.db import AuditCommand
 from odp.db import Session
-from odp.db.models import User, Vocabulary, VocabularyTerm, VocabularyTermAudit
+from odp.db.models import Vocabulary, VocabularyTerm, VocabularyTermAudit
 from odp.lib.schema import schema_catalog
 
 router = APIRouter()
@@ -34,19 +34,19 @@ def output_vocabulary_model(vocabulary: Vocabulary) -> VocabularyModel:
     )
 
 
-def output_audit_model(row) -> VocabularyTermAuditModel:
+def output_audit_model(audit: VocabularyTermAudit) -> VocabularyTermAuditModel:
     return VocabularyTermAuditModel(
         table='vocabulary_term',
         tag_id=None,
-        audit_id=row.VocabularyTermAudit.id,
-        client_id=row.VocabularyTermAudit.client_id,
-        user_id=row.VocabularyTermAudit.user_id,
-        user_name=row.user_name,
-        command=row.VocabularyTermAudit.command,
-        timestamp=row.VocabularyTermAudit.timestamp.isoformat(),
-        vocabulary_id=row.VocabularyTermAudit._vocabulary_id,
-        term_id=row.VocabularyTermAudit._term_id,
-        data=row.VocabularyTermAudit._data,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        vocabulary_id=audit._vocabulary_id,
+        term_id=audit._term_id,
+        data=audit._data,
     )
 
 
@@ -54,6 +54,7 @@ def create_audit_record(auth: Authorized, term: VocabularyTerm, command: AuditCo
     VocabularyTermAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=datetime.now(timezone.utc),
         _vocabulary_id=term.vocabulary_id,
@@ -186,14 +187,13 @@ async def get_vocabulary_audit_log(
         paginator: Paginator = Depends(partial(Paginator, sort='timestamp')),
 ):
     stmt = (
-        select(VocabularyTermAudit, User.name.label('user_name')).
-        outerjoin(User, VocabularyTermAudit.user_id == User.id).
+        select(VocabularyTermAudit).
         where(VocabularyTermAudit._vocabulary_id == vocabulary_id)
     )
 
     return paginator.paginate(
         stmt,
-        lambda row: output_audit_model(row),
+        lambda row: output_audit_model(row.VocabularyTermAudit),
     )
 
 
@@ -206,12 +206,11 @@ async def get_vocabulary_audit_detail(
         vocabulary_id: str,
         audit_id: int,
 ):
-    if not (row := Session.execute(
-            select(VocabularyTermAudit, User.name.label('user_name')).
-            outerjoin(User, VocabularyTermAudit.user_id == User.id).
+    if not (audit := Session.execute(
+            select(VocabularyTermAudit).
             where(VocabularyTermAudit._vocabulary_id == vocabulary_id).
             where(VocabularyTermAudit.id == audit_id)
-    ).one_or_none()):
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
-    return output_audit_model(row)
+    return output_audit_model(audit)

@@ -8,8 +8,8 @@ from sqlalchemy import select
 from odp.const import ODPCollectionTag, ODPScope
 from odp.const.db import ScopeType
 from odp.db import Session
-from odp.db.models import CollectionTag, PublishedRecord, Record, RecordAudit, RecordTag, RecordTagAudit, Scope
-from test.api import (CollectionAuth, all_scopes, all_scopes_excluding, assert_conflict, assert_empty_result, assert_forbidden, assert_new_timestamp,
+from odp.db.models import CollectionTag, PublishedRecord, Record, RecordAudit, RecordTag, RecordTagAudit
+from test.api import (all_scopes, all_scopes_excluding, assert_conflict, assert_empty_result, assert_forbidden, assert_new_timestamp,
                       assert_not_found, assert_unprocessable)
 from test.factories import (CollectionFactory, CollectionTagFactory, RecordFactory, RecordTagFactory, SchemaFactory, TagFactory, VocabularyFactory,
                             fake)
@@ -125,11 +125,7 @@ def new_generic_tag(cardinality, is_keyword_tag=False):
     return TagFactory(
         type='record',
         cardinality=cardinality,
-        scope=Session.get(
-            Scope, (ODPScope.RECORD_QC, ScopeType.odp)
-        ) or Scope(
-            id=ODPScope.RECORD_QC, type=ScopeType.odp
-        ),
+        scope_id=ODPScope.RECORD_QC.value,
         schema=SchemaFactory(
             type='tag',
             uri=schema_uri,
@@ -241,7 +237,7 @@ def assert_json_record_result(response, json, record):
     for n, json_tag in enumerate(json_tags):
         assert json_tag['tag_id'] == db_tags[n].tag_id
         assert json_tag['user_id'] == db_tags[n].user_id
-        assert json_tag['user_name'] == db_tags[n].user.name
+        assert json_tag['user_name'] == db_tags[n].user_name
         assert json_tag['data'] == db_tags[n].data
         assert_new_timestamp(datetime.fromisoformat(json_tag['timestamp']))
 
@@ -269,18 +265,9 @@ def assert_json_record_results(response, json, records):
 
 
 @pytest.mark.require_scope(ODPScope.RECORD_READ)
-def test_list_records(api, record_batch, scopes, collection_auth, record_list_filter):
+def test_list_records(api, record_batch, scopes, record_list_filter):
     authorized = ODPScope.RECORD_READ in scopes
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-        expected_result_batch = [record_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [CollectionFactory()]
-        expected_result_batch = []
-    else:
-        api_client_collections = None
-        expected_result_batch = record_batch
+    expected_result_batch = record_batch
 
     params = {}
     if record_list_filter == 'parent_id':
@@ -292,7 +279,7 @@ def test_list_records(api, record_batch, scopes, collection_auth, record_list_fi
             expected_result_batch
         ))
 
-    r = api(scopes, api_client_collections).get('/record/', params=params)
+    r = api(scopes).get('/record/', params=params)
 
     if authorized:
         assert_json_record_results(r, r.json(), expected_result_batch)
@@ -304,23 +291,15 @@ def test_list_records(api, record_batch, scopes, collection_auth, record_list_fi
 
 
 @pytest.mark.require_scope(ODPScope.RECORD_READ)
-def test_get_record(api, record_batch, scopes, collection_auth, record_ident):
-    authorized = ODPScope.RECORD_READ in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch[1].collection]
-    else:
-        api_client_collections = None
+def test_get_record(api, record_batch, scopes, record_ident):
+    authorized = ODPScope.RECORD_READ in scopes
 
     if record_ident == 'id':
-        r = api(scopes, api_client_collections).get(f'/record/{record_batch[2].id}')
+        r = api(scopes).get(f'/record/{record_batch[2].id}')
     elif record_ident == 'doi':
         if not (doi := record_batch[2].doi):
             return
-        r = api(scopes, api_client_collections).get(f'/record/doi/{doi.swapcase()}')  # case-insensitive DOI retrieval
+        r = api(scopes).get(f'/record/doi/{doi.swapcase()}')  # case-insensitive DOI retrieval
 
     if authorized:
         assert_json_record_result(r, r.json(), record_batch[2])
@@ -331,18 +310,13 @@ def test_get_record(api, record_batch, scopes, collection_auth, record_ident):
     assert_no_audit_log()
 
 
-def test_get_record_not_found(api, record_batch, collection_auth, record_ident):
+def test_get_record_not_found(api, record_batch, record_ident):
     scopes = [ODPScope.RECORD_READ]
 
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [record_batch[2].collection]
-
     if record_ident == 'id':
-        r = api(scopes, api_client_collections).get(f'/record/{uuid.uuid4()}')
+        r = api(scopes).get(f'/record/{uuid.uuid4()}')
     elif record_ident == 'doi':
-        r = api(scopes, api_client_collections).get('/record/doi/10.55555/foo')
+        r = api(scopes).get('/record/doi/10.55555/foo')
 
     assert_not_found(r)
     assert_db_state(record_batch)
@@ -363,39 +337,25 @@ def test_get_record_not_found(api, record_batch, collection_auth, record_ident):
     (True, all_scopes, []),
     (True, all_scopes_excluding(ODPScope.RECORD_ADMIN), []),
 ])
-def test_create_record(api, record_batch, admin_route, scopes, collection_tags, collection_auth, with_parent):
+def test_create_record(api, record_batch, admin_route, scopes, collection_tags, with_parent):
     route = '/record/admin/' if admin_route else '/record/'
 
     authorized = admin_route and ODPScope.RECORD_ADMIN in scopes or \
                  not admin_route and ODPScope.RECORD_WRITE in scopes
-    authorized = authorized and collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        new_record_collection = record_batch[2].collection
-    else:
-        new_record_collection = None  # new collection
 
     if with_parent == 'doi':
-        parent_doi = record_batch[0].doi.swapcase()  # ensure DOI ref works case-insensitively
+        parent_doi = record_batch[0].doi.swapcase()
     elif with_parent == 'doi.org':
         parent_doi = f'https://doi.org/{record_batch[0].doi.swapcase()}'
     else:
         parent_doi = None
 
     modified_record_batch = record_batch + [record := record_build(
-        collection=new_record_collection,
         collection_tags=collection_tags,
         parent_doi=parent_doi,
     )]
 
-    r = api(scopes, api_client_collections).post(route, json=dict(
+    r = api(scopes).post(route, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -422,41 +382,25 @@ def test_create_record(api, record_batch, admin_route, scopes, collection_tags, 
         assert_no_audit_log()
 
 
-def test_create_record_conflict(api, record_batch_with_ids, is_admin_route, collection_auth, ident_conflict):
+def test_create_record_conflict(api, record_batch_with_ids, is_admin_route, ident_conflict):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_with_ids[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_with_ids[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        new_record_collection = record_batch_with_ids[2].collection
-    else:
-        new_record_collection = None  # new collection
 
     if ident_conflict == 'doi':
         record = record_build(
-            doi=record_batch_with_ids[0].doi.swapcase(),  # check for case-insensitive DOI collision
-            collection=new_record_collection,
+            doi=record_batch_with_ids[0].doi.swapcase(),
         )
     elif ident_conflict == 'sid':
         record = record_build(
             sid=record_batch_with_ids[0].sid,
-            collection=new_record_collection,
         )
     else:
         record = record_build(
             doi=record_batch_with_ids[0].doi,
             sid=record_batch_with_ids[1].sid,
-            collection=new_record_collection,
         )
 
-    r = api(scopes, api_client_collections).post(route, json=dict(
+    r = api(scopes).post(route, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -464,37 +408,20 @@ def test_create_record_conflict(api, record_batch_with_ids, is_admin_route, coll
         metadata=record.metadata_,
     ))
 
-    if authorized:
-        if ident_conflict in ('doi', 'both'):
-            assert_conflict(r, 'DOI is already in use')
-        else:
-            assert_conflict(r, 'SID is already in use')
+    if ident_conflict in ('doi', 'both'):
+        assert_conflict(r, 'DOI is already in use')
     else:
-        assert_forbidden(r)
+        assert_conflict(r, 'SID is already in use')
 
     assert_db_state(record_batch_with_ids)
     assert_no_audit_log()
 
 
-def test_create_or_update_record_parent_error(api, record_batch, create_or_update, is_admin_route, collection_auth, parent_error):
+def test_create_or_update_record_parent_error(api, record_batch, create_or_update, is_admin_route, parent_error):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        collection = record_batch[2].collection
-    else:
-        collection = None  # new collection
 
     kwargs = dict(
-        collection=collection,
         identifiers='doi',
     )
     if create_or_update == 'update':
@@ -532,7 +459,7 @@ def test_create_or_update_record_parent_error(api, record_batch, create_or_updat
             "relationType": "IsPartOf"
         }]
 
-    client = api(scopes, api_client_collections)
+    client = api(scopes)
 
     if create_or_update == 'create':
         func = client.post
@@ -547,17 +474,14 @@ def test_create_or_update_record_parent_error(api, record_batch, create_or_updat
         metadata=record.metadata_,
     ))
 
-    if authorized:
-        if parent_error == 'non-doi':
-            assert_unprocessable(r, 'Parent reference is not a valid DOI.')
-        elif parent_error == 'multiple-parents':
-            assert_unprocessable(r, 'Cannot determine parent DOI: found multiple related identifiers with relation IsPartOf and type DOI.')
-        elif parent_error == 'parent-not-found':
-            assert_unprocessable(r, 'Record not found for parent DOI 10.55555/foo')
-        elif parent_error == 'parent-self':
-            assert_unprocessable(r, 'DOI cannot be a parent of itself.')
-    else:
-        assert_forbidden(r)
+    if parent_error == 'non-doi':
+        assert_unprocessable(r, 'Parent reference is not a valid DOI.')
+    elif parent_error == 'multiple-parents':
+        assert_unprocessable(r, 'Cannot determine parent DOI: found multiple related identifiers with relation IsPartOf and type DOI.')
+    elif parent_error == 'parent-not-found':
+        assert_unprocessable(r, 'Record not found for parent DOI 10.55555/foo')
+    elif parent_error == 'parent-self':
+        assert_unprocessable(r, 'DOI cannot be a parent of itself.')
 
     assert_db_state(record_batch)
     assert_no_audit_log()
@@ -581,27 +505,14 @@ def test_create_or_update_record_parent_error(api, record_batch, create_or_updat
     (True, all_scopes, []),
     (True, all_scopes_excluding(ODPScope.RECORD_ADMIN), []),
 ])
-def test_update_record(api, record_batch, admin_route, scopes, collection_tags, collection_auth, with_parent):
+def test_update_record(api, record_batch, admin_route, scopes, collection_tags, with_parent):
     route = '/record/admin/' if admin_route else '/record/'
 
     authorized = admin_route and ODPScope.RECORD_ADMIN in scopes or \
                  not admin_route and ODPScope.RECORD_WRITE in scopes
-    authorized = authorized and collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        modified_record_collection = record_batch[2].collection
-    else:
-        modified_record_collection = None  # new collection
 
     if with_parent == 'doi':
-        parent_doi = record_batch[0].doi.swapcase()  # ensure DOI ref works case-insensitively
+        parent_doi = record_batch[0].doi.swapcase()
     elif with_parent == 'doi.org':
         parent_doi = f'https://doi.org/{record_batch[0].doi.swapcase()}'
     else:
@@ -611,12 +522,11 @@ def test_update_record(api, record_batch, admin_route, scopes, collection_tags, 
     modified_record_batch[2] = (record := record_build(
         id=record_batch[2].id,
         doi=record_batch[2].doi,
-        collection=modified_record_collection,
         collection_tags=collection_tags,
         parent_doi=parent_doi,
     ))
 
-    r = api(scopes, api_client_collections).put(route + record.id, json=dict(
+    r = api(scopes).put(route + record.id, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -642,30 +552,15 @@ def test_update_record(api, record_batch, admin_route, scopes, collection_tags, 
         assert_no_audit_log()
 
 
-def test_update_record_not_found(api, record_batch, is_admin_route, collection_auth):
-    # if not found on the admin route, the record is created!
+def test_update_record_not_found(api, record_batch, is_admin_route):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        modified_record_collection = record_batch[2].collection
-    else:
-        modified_record_collection = None  # new collection
 
     modified_record_batch = record_batch + [record := record_build(
         id=str(uuid.uuid4()),
-        collection=modified_record_collection,
     )]
 
-    r = api(scopes, api_client_collections).put(route + record.id, json=dict(
+    r = api(scopes).put(route + record.id, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -673,59 +568,38 @@ def test_update_record_not_found(api, record_batch, is_admin_route, collection_a
         metadata=record.metadata_,
     ))
 
-    if authorized:
-        if is_admin_route:
-            assert_json_record_result(r, r.json(), record)
-            assert_db_state(modified_record_batch)
-            assert_audit_log('insert', record)
-        else:
-            assert_not_found(r)
-            assert_db_state(record_batch)
-            assert_no_audit_log()
+    if is_admin_route:
+        assert_json_record_result(r, r.json(), record)
+        assert_db_state(modified_record_batch)
+        assert_audit_log('insert', record)
     else:
-        assert_forbidden(r)
+        assert_not_found(r)
         assert_db_state(record_batch)
         assert_no_audit_log()
 
 
-def test_update_record_conflict(api, record_batch_with_ids, is_admin_route, collection_auth, ident_conflict):
+def test_update_record_conflict(api, record_batch_with_ids, is_admin_route, ident_conflict):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_with_ids[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_with_ids[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        modified_record_collection = record_batch_with_ids[2].collection
-    else:
-        modified_record_collection = None  # new collection
 
     if ident_conflict == 'doi':
         record = record_build(
             id=record_batch_with_ids[2].id,
-            doi=record_batch_with_ids[0].doi.swapcase(),  # check for case-insensitive DOI collision
-            collection=modified_record_collection,
+            doi=record_batch_with_ids[0].doi.swapcase(),
         )
     elif ident_conflict == 'sid':
         record = record_build(
             id=record_batch_with_ids[2].id,
             sid=record_batch_with_ids[0].sid,
-            collection=modified_record_collection,
         )
     else:
         record = record_build(
             id=record_batch_with_ids[2].id,
             doi=record_batch_with_ids[0].doi,
             sid=record_batch_with_ids[1].sid,
-            collection=modified_record_collection,
         )
 
-    r = api(scopes, api_client_collections).put(route + record.id, json=dict(
+    r = api(scopes).put(route + record.id, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -733,34 +607,18 @@ def test_update_record_conflict(api, record_batch_with_ids, is_admin_route, coll
         metadata=record.metadata_,
     ))
 
-    if authorized:
-        if ident_conflict in ('doi', 'both'):
-            assert_conflict(r, 'DOI is already in use')
-        else:
-            assert_conflict(r, 'SID is already in use')
+    if ident_conflict in ('doi', 'both'):
+        assert_conflict(r, 'DOI is already in use')
     else:
-        assert_forbidden(r)
+        assert_conflict(r, 'SID is already in use')
 
     assert_db_state(record_batch_with_ids)
     assert_no_audit_log()
 
 
-def test_update_record_doi_change(api, record_batch_with_ids, is_admin_route, collection_auth, doi_change, is_published_record):
+def test_update_record_doi_change(api, record_batch_with_ids, is_admin_route, doi_change, is_published_record):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_with_ids[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_with_ids[1].collection]
-    else:
-        api_client_collections = None
-
-    if collection_auth in (CollectionAuth.MATCH, CollectionAuth.MISMATCH):
-        modified_record_collection = record_batch_with_ids[2].collection
-    else:
-        modified_record_collection = None  # new collection
 
     if is_published_record:
         PublishedRecord(
@@ -773,16 +631,14 @@ def test_update_record_doi_change(api, record_batch_with_ids, is_admin_route, co
         modified_record_batch[2] = (record := record_build(
             identifiers='doi',
             id=record_batch_with_ids[2].id,
-            collection=modified_record_collection,
         ))
     elif doi_change == 'remove':
         modified_record_batch[2] = (record := record_build(
             identifiers='sid',
             id=record_batch_with_ids[2].id,
-            collection=modified_record_collection,
         ))
 
-    r = api(scopes, api_client_collections).put(route + record.id, json=dict(
+    r = api(scopes).put(route + record.id, json=dict(
         doi=record.doi,
         sid=record.sid,
         collection_id=record.collection_id,
@@ -790,19 +646,14 @@ def test_update_record_doi_change(api, record_batch_with_ids, is_admin_route, co
         metadata=record.metadata_,
     ))
 
-    if authorized:
-        if is_published_record == 'doi':
-            assert_unprocessable(r, 'The DOI has been published and cannot be modified.')
-            assert_db_state(record_batch_with_ids)
-            assert_no_audit_log()
-        else:
-            assert_json_record_result(r, r.json(), record)
-            assert_db_state(modified_record_batch)
-            assert_audit_log('update', record)
-    else:
-        assert_forbidden(r)
+    if is_published_record == 'doi':
+        assert_unprocessable(r, 'The DOI has been published and cannot be modified.')
         assert_db_state(record_batch_with_ids)
         assert_no_audit_log()
+    else:
+        assert_json_record_result(r, r.json(), record)
+        assert_db_state(modified_record_batch)
+        assert_audit_log('update', record)
 
 
 @pytest.mark.parametrize('admin_route, scopes, collection_tags', [
@@ -819,19 +670,11 @@ def test_update_record_doi_change(api, record_batch_with_ids, is_admin_route, co
     (True, all_scopes, []),
     (True, all_scopes_excluding(ODPScope.RECORD_ADMIN), []),
 ])
-def test_delete_record(api, record_batch_with_ids, admin_route, scopes, collection_tags, collection_auth, is_published_record):
+def test_delete_record(api, record_batch_with_ids, admin_route, scopes, collection_tags, is_published_record):
     route = '/record/admin/' if admin_route else '/record/'
 
     authorized = admin_route and ODPScope.RECORD_ADMIN in scopes or \
                  not admin_route and ODPScope.RECORD_WRITE in scopes
-    authorized = authorized and collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_with_ids[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_with_ids[1].collection]
-    else:
-        api_client_collections = None
 
     for ct in collection_tags:
         CollectionTagFactory(
@@ -849,7 +692,7 @@ def test_delete_record(api, record_batch_with_ids, admin_route, scopes, collecti
     deleted_record = modified_record_batch[2]
     del modified_record_batch[2]
 
-    r = api(scopes, api_client_collections).delete(f'{route}{(record_id := record_batch_with_ids[2].id)}')
+    r = api(scopes).delete(f'{route}{(record_id := record_batch_with_ids[2].id)}')
 
     if authorized:
         if not admin_route and ODPCollectionTag.FROZEN in collection_tags:
@@ -862,7 +705,6 @@ def test_delete_record(api, record_batch_with_ids, admin_route, scopes, collecti
             assert_no_audit_log()
         else:
             assert_empty_result(r)
-            # check audit log first because assert_db_state expires the deleted item
             assert_audit_log('delete', deleted_record)
             assert_db_state(modified_record_batch)
     else:
@@ -871,16 +713,11 @@ def test_delete_record(api, record_batch_with_ids, admin_route, scopes, collecti
         assert_no_audit_log()
 
 
-def test_delete_record_not_found(api, record_batch, is_admin_route, collection_auth):
+def test_delete_record_not_found(api, record_batch, is_admin_route):
     route = '/record/admin/' if is_admin_route else '/record/'
     scopes = [ODPScope.RECORD_ADMIN] if is_admin_route else [ODPScope.RECORD_WRITE]
 
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [record_batch[2].collection]
-
-    r = api(scopes, api_client_collections).delete(f'{route}foo')
+    r = api(scopes).delete(f'{route}foo')
 
     assert_not_found(r)
     assert_db_state(record_batch)
@@ -888,7 +725,7 @@ def test_delete_record_not_found(api, record_batch, is_admin_route, collection_a
 
 
 @pytest.mark.require_scope(ODPScope.RECORD_QC)
-def test_tag_record(api, record_batch_no_tags, scopes, collection_auth, tag_cardinality, is_keyword):
+def test_tag_record(api, record_batch_no_tags, scopes, tag_cardinality, is_keyword):
     def tag_data(n):
         nonlocal incorrect_vocab, incorrect_keyword
         if is_keyword == 'no':
@@ -900,17 +737,9 @@ def test_tag_record(api, record_batch_no_tags, scopes, collection_auth, tag_card
         elif is_keyword == 'yes-invalid-keyword':
             return {'vocabulary': tag.vocabulary_id, 'keyword': (incorrect_keyword := fake.word())}
 
-    authorized = ODPScope.RECORD_QC in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
+    authorized = ODPScope.RECORD_QC in scopes
 
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_no_tags[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_no_tags[1].collection]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+    client = api(scopes)
     tag = new_generic_tag(tag_cardinality, is_keyword != 'no')
     incorrect_vocab = None
     incorrect_keyword = None
@@ -972,18 +801,10 @@ def test_tag_record(api, record_batch_no_tags, scopes, collection_auth, tag_card
 
 
 @pytest.mark.require_scope(ODPScope.RECORD_QC)
-def test_tag_record_user_conflict(api, record_batch_no_tags, scopes, collection_auth, tag_cardinality):
-    authorized = ODPScope.RECORD_QC in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
+def test_tag_record_user_conflict(api, record_batch_no_tags, scopes, tag_cardinality):
+    authorized = ODPScope.RECORD_QC in scopes
 
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_no_tags[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_no_tags[1].collection]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+    client = api(scopes)
     tag = new_generic_tag(tag_cardinality)
     record_tag_1 = RecordTagFactory(
         record=record_batch_no_tags[2],
@@ -1029,21 +850,13 @@ def test_tag_record_user_conflict(api, record_batch_no_tags, scopes, collection_
     (True, all_scopes),
     (True, all_scopes_excluding(ODPScope.RECORD_ADMIN)),
 ])
-def test_untag_record(api, record_batch_no_tags, admin_route, scopes, collection_auth, tag_cardinality, is_same_user):
+def test_untag_record(api, record_batch_no_tags, admin_route, scopes, tag_cardinality, is_same_user):
     route = '/record/admin/' if admin_route else '/record/'
 
     authorized = admin_route and ODPScope.RECORD_ADMIN in scopes or \
                  not admin_route and ODPScope.RECORD_QC in scopes
-    authorized = authorized and collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
 
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [record_batch_no_tags[2].collection]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [record_batch_no_tags[1].collection]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+    client = api(scopes)
     record = record_batch_no_tags[2]
     record_tags = RecordTagFactory.create_batch(randint(1, 3), record=record)
 
@@ -1052,7 +865,8 @@ def test_untag_record(api, record_batch_no_tags, admin_route, scopes, collection
         record_tag_1 = RecordTagFactory(
             record=record,
             tag=tag,
-            user=None,
+            user_id=None,
+            user_name=None,
         )
     else:
         record_tag_1 = RecordTagFactory(

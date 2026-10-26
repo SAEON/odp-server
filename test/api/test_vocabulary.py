@@ -6,7 +6,7 @@ from sqlalchemy import select
 from odp.const import ODPScope
 from odp.const.db import SchemaType, ScopeType
 from odp.db import Session
-from odp.db.models import Scope, Vocabulary, VocabularyTerm, VocabularyTermAudit
+from odp.db.models import Vocabulary, VocabularyTerm, VocabularyTermAudit
 from test.api import (assert_conflict, assert_empty_result, assert_forbidden, assert_new_timestamp,
                       assert_not_found, assert_unprocessable)
 from test.factories import SchemaFactory, VocabularyFactory, VocabularyTermFactory, fake
@@ -28,8 +28,7 @@ def vocabulary_batch_non_static():
 
 def prepare_project_vocabulary(vocab):
     """Update a factory-generated vocabulary to be an ODP Project vocabulary."""
-    vocab.scope = Session.get(Scope, (ODPScope.VOCABULARY_PROJECT, ScopeType.odp)) or \
-                  Scope(id=ODPScope.VOCABULARY_PROJECT, type=ScopeType.odp)
+    vocab.scope_id = ODPScope.VOCABULARY_PROJECT.value
     vocab.schema = SchemaFactory(
         type=SchemaType.vocabulary,
         uri='https://odp.saeon.ac.za/schema/vocabulary/project',
@@ -53,7 +52,6 @@ def assert_db_state(vocabularies):
     for n, row in enumerate(result):
         assert row.id == vocabularies[n].id
         assert row.scope_id == vocabularies[n].scope_id
-        assert row.scope_type == 'odp'
         assert row.schema_id == vocabularies[n].schema_id
         assert row.schema_type == 'vocabulary'
         assert row.static == vocabularies[n].static

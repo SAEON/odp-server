@@ -2,18 +2,18 @@ import re
 from datetime import datetime, timezone
 from random import choice, randint
 
-from jschon import JSON, JSONPatch, JSONSchemaError, URI
+from jschon import URI
 
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 from faker import Faker
 
 from odp.const.db import SubmissionStatus
-from odp.const import ODPScope, ODPMetadataSchema
+from odp.const import ODPMetadataSchema
 from odp.lib.schema import schema_catalog as catalog
 from odp.db import Session
-from odp.db.models import (Catalog, Client, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag, Role,
-                           Submission, Schema, Scope, Tag, User, Vocabulary, VocabularyTerm)
+from odp.db.models import (Catalog, Collection, CollectionTag, DownloadAudit, Provider, Record, RecordTag,
+                           Submission, Schema, Tag, Vocabulary, VocabularyTerm)
 from test import datacite4_example, iso19115_example, eml_example
 
 fake = Faker()
@@ -111,14 +111,6 @@ class ODPModelFactory(SQLAlchemyModelFactory):
         sqlalchemy_session_persistence = 'commit'
 
 
-class ScopeFactory(ODPModelFactory):
-    class Meta:
-        model = Scope
-
-    id = factory.Sequence(lambda n: f'{fake.word()}.{n}')
-    type = factory.LazyFunction(lambda: choice(('odp', 'oauth', 'client')))
-
-
 class SchemaFactory(ODPModelFactory):
     class Meta:
         model = Schema
@@ -177,30 +169,6 @@ class CollectionFactory(ODPModelFactory):
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
 
-class ClientFactory(ODPModelFactory):
-    class Meta:
-        model = Client
-
-    id = factory.Sequence(lambda n: id_from_fake('catch_phrase', n))
-    collection_specific = factory.LazyFunction(lambda: randint(0, 1))
-
-    @factory.post_generation
-    def scopes(obj, create, scopes):
-        if scopes:
-            for scope in scopes:
-                obj.scopes.append(scope)
-            if create:
-                Session.commit()
-
-    @factory.post_generation
-    def collections(obj, create, collections):
-        if collections:
-            for collection in collections:
-                obj.collections.append(collection)
-            if create:
-                Session.commit()
-
-
 class VocabularyTermFactory(ODPModelFactory):
     class Meta:
         model = VocabularyTerm
@@ -215,7 +183,7 @@ class VocabularyFactory(ODPModelFactory):
         model = Vocabulary
 
     id = factory.Sequence(lambda n: id_from_fake('word', n))
-    scope = factory.SubFactory(ScopeFactory, type='odp')
+    scope_id = factory.Sequence(lambda n: f'{fake.word()}.{n}')
     schema = factory.SubFactory(SchemaFactory, type='vocabulary')
     static = factory.LazyFunction(lambda: randint(0, 1))
     terms = factory.RelatedFactoryList(
@@ -230,11 +198,11 @@ class TagFactory(ODPModelFactory):
         model = Tag
         exclude = ('is_keyword_tag',)
 
-    id = factory.LazyAttribute(lambda tag: f'tag-{tag.scope.id}')
+    scope_id = factory.Sequence(lambda n: f'{fake.word()}.{n}')
+    id = factory.LazyAttribute(lambda tag: f'tag-{tag.scope_id}')
     type = factory.LazyFunction(lambda: choice(('collection', 'record')))
     cardinality = factory.LazyFunction(lambda: choice(('one', 'user', 'multi')))
     public = factory.LazyFunction(lambda: randint(0, 1))
-    scope = factory.SubFactory(ScopeFactory, type='odp')
     schema = factory.SubFactory(SchemaFactory, type='tag')
 
     is_keyword_tag = factory.LazyFunction(lambda: randint(0, 1))
@@ -245,32 +213,14 @@ class TagFactory(ODPModelFactory):
     )
 
 
-class UserFactory(ODPModelFactory):
-    class Meta:
-        model = User
-
-    id = factory.Faker('uuid4')
-    name = factory.Faker('name')
-    email = factory.Sequence(lambda n: f'{fake.email()}.{n}')
-    active = factory.LazyFunction(lambda: randint(0, 1))
-    verified = factory.LazyFunction(lambda: randint(0, 1))
-
-    @factory.post_generation
-    def roles(obj, create, roles):
-        if roles:
-            for role in roles:
-                obj.roles.append(role)
-            if create:
-                Session.commit()
-
-
 class CollectionTagFactory(ODPModelFactory):
     class Meta:
         model = CollectionTag
 
     collection = factory.SubFactory(CollectionFactory)
     tag = factory.SubFactory(TagFactory, type='collection')
-    user = factory.SubFactory(UserFactory)
+    user_id = factory.Faker('uuid4')
+    user_name = factory.Faker('name')
     data = {}
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
 
@@ -310,33 +260,10 @@ class RecordTagFactory(ODPModelFactory):
 
     record = factory.SubFactory(RecordFactory)
     tag = factory.SubFactory(TagFactory, type='record')
-    user = factory.SubFactory(UserFactory)
+    user_id = factory.Faker('uuid4')
+    user_name = factory.Faker('name')
     data = {}
     timestamp = factory.LazyFunction(lambda: datetime.now(timezone.utc))
-
-
-class RoleFactory(ODPModelFactory):
-    class Meta:
-        model = Role
-
-    id = factory.Sequence(lambda n: id_from_fake('job', n))
-    collection_specific = factory.LazyFunction(lambda: randint(0, 1))
-
-    @factory.post_generation
-    def scopes(obj, create, scopes):
-        if scopes:
-            for scope in scopes:
-                obj.scopes.append(scope)
-            if create:
-                Session.commit()
-
-    @factory.post_generation
-    def collections(obj, create, collections):
-        if collections:
-            for collection in collections:
-                obj.collections.append(collection)
-            if create:
-                Session.commit()
 
 
 def load_submission_example_fixture():
@@ -384,4 +311,3 @@ class SubmissionFactory(ODPModelFactory):
     @factory.lazy_attribute
     def data(self):
         return load_submission_example_fixture()
-

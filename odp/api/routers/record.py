@@ -36,7 +36,6 @@ from odp.db.models import (
     RecordTag,
     RecordTagAudit,
     Tag,
-    User,
     VocabularyTerm,
 )
 
@@ -84,8 +83,6 @@ async def list_records(
         select(Record).
         join(Collection)
     )
-    if auth.collection_ids != '*':
-        stmt = stmt.where(Collection.id.in_(auth.collection_ids))
 
     if collection_id:
         stmt = stmt.where(Collection.id.in_(collection_id))
@@ -141,9 +138,6 @@ async def get_record(
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     return output_record_model(record)
 
 
@@ -160,9 +154,6 @@ async def get_record_by_doi(
                     where(func.lower(Record.doi) == record_doi.lower())
     ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
-
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
 
     return output_record_model(record)
 
@@ -201,9 +192,6 @@ async def update_record(
         metadata_schema: JSONSchema = Depends(get_metadata_schema),
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_WRITE)),
 ):
-    if auth.collection_ids != '*' and record_in.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
@@ -222,9 +210,6 @@ async def admin_set_record(
         metadata_schema: JSONSchema = Depends(get_metadata_schema),
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_ADMIN)),
 ):
-    if auth.collection_ids != '*' and record_in.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     create = False
     record = Session.get(Record, str(record_id))
     if not record:
@@ -266,9 +251,6 @@ async def tag_record(
 ):
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
-
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
 
     if not (tag := Session.get(Tag, (tag_instance_in.tag_id, TagType.record))):
         raise HTTPException(HTTP_404_NOT_FOUND)
@@ -314,6 +296,7 @@ async def tag_record(
             tag_id=tag_instance_in.tag_id,
             tag_type=TagType.record,
             user_id=auth.user_id,
+            user_name=auth.user_name,
         )
 
     if record_tag.data != tag_instance_in.data:
@@ -332,6 +315,7 @@ async def tag_record(
                 raise HTTPException(HTTP_422_UNPROCESSABLE_ENTITY,
                                     f'Vocabulary {vocab_id} does not contain keyword {keyword_id}')
 
+        record_tag.user_name = auth.user_name
         record_tag.data = tag_instance_in.data
         record_tag.timestamp = (timestamp := datetime.now(timezone.utc))
         record_tag.save()
@@ -380,9 +364,6 @@ async def list_catalog_records(
     if not (record := Session.get(Record, record_id)):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
-    if auth.collection_ids != '*' and record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     stmt = (
         select(CatalogRecord).
         where(CatalogRecord.record_id == record_id)
@@ -406,9 +387,6 @@ async def get_catalog_record(
     if not (catalog_record := Session.get(CatalogRecord, (catalog_id, record_id))):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
-    if auth.collection_ids != '*' and catalog_record.record.collection_id not in auth.collection_ids:
-        raise HTTPException(HTTP_403_FORBIDDEN)
-
     return output_catalog_record_model(catalog_record)
 
 
@@ -421,15 +399,6 @@ async def get_record_audit_log(
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_READ)),
         paginator: Paginator = Depends(partial(Paginator, sort='timestamp')),
 ):
-    # allow retrieving the audit log for a deleted record,
-    # except if auth is collection-specific
-    if auth.collection_ids != '*':
-        if not (record := Session.get(Record, record_id)):
-            raise HTTPException(HTTP_404_NOT_FOUND)
-
-        if record.collection_id not in auth.collection_ids:
-            raise HTTPException(HTTP_403_FORBIDDEN)
-
     audit_subq = union_all(
         select(
             literal_column("'record'").label('table'),
@@ -437,6 +406,7 @@ async def get_record_audit_log(
             RecordAudit.id,
             RecordAudit.client_id,
             RecordAudit.user_id,
+            RecordAudit.user_name,
             RecordAudit.command,
             RecordAudit.timestamp
         ).where(RecordAudit._id == record_id),
@@ -446,15 +416,13 @@ async def get_record_audit_log(
             RecordTagAudit.id,
             RecordTagAudit.client_id,
             RecordTagAudit.user_id,
+            RecordTagAudit.user_name,
             RecordTagAudit.command,
             RecordTagAudit.timestamp
         ).where(RecordTagAudit._record_id == record_id)
     ).subquery()
 
-    stmt = (
-        select(audit_subq, User.name.label('user_name')).
-        outerjoin(User, audit_subq.c.user_id == User.id)
-    )
+    stmt = select(audit_subq)
 
     return paginator.paginate(
         stmt,
@@ -480,39 +448,29 @@ async def get_record_audit_detail(
         record_audit_id: int,
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_READ)),
 ):
-    # allow retrieving the audit detail for a deleted record,
-    # except if auth is collection-specific
-    if auth.collection_ids != '*':
-        if not (record := Session.get(Record, record_id)):
-            raise HTTPException(HTTP_404_NOT_FOUND)
-
-        if record.collection_id not in auth.collection_ids:
-            raise HTTPException(HTTP_403_FORBIDDEN)
-
-    if not (row := Session.execute(
-            select(RecordAudit, User.name.label('user_name')).
-                    outerjoin(User, RecordAudit.user_id == User.id).
-                    where(RecordAudit.id == record_audit_id).
-                    where(RecordAudit._id == record_id)
-    ).one_or_none()):
+    if not (audit := Session.execute(
+            select(RecordAudit).
+            where(RecordAudit.id == record_audit_id).
+            where(RecordAudit._id == record_id)
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
     return RecordAuditModel(
         table='record',
         tag_id=None,
-        audit_id=row.RecordAudit.id,
-        client_id=row.RecordAudit.client_id,
-        user_id=row.RecordAudit.user_id,
-        user_name=row.user_name,
-        command=row.RecordAudit.command,
-        timestamp=row.RecordAudit.timestamp.isoformat(),
-        record_id=row.RecordAudit._id,
-        record_doi=row.RecordAudit._doi,
-        record_sid=row.RecordAudit._sid,
-        record_metadata=row.RecordAudit._metadata,
-        record_collection_id=row.RecordAudit._collection_id,
-        record_schema_id=row.RecordAudit._schema_id,
-        record_parent_id=row.RecordAudit._parent_id,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        record_id=audit._id,
+        record_doi=audit._doi,
+        record_sid=audit._sid,
+        record_metadata=audit._metadata,
+        record_collection_id=audit._collection_id,
+        record_schema_id=audit._schema_id,
+        record_parent_id=audit._parent_id,
     )
 
 
@@ -525,43 +483,25 @@ async def get_record_tag_audit_detail(
         record_tag_audit_id: int,
         auth: Authorized = Depends(Authorize(ODPScope.RECORD_READ)),
 ):
-    # allow retrieving the audit detail for a deleted record,
-    # except if auth is collection-specific
-    if auth.collection_ids != '*':
-        if not (record := Session.get(Record, record_id)):
-            raise HTTPException(HTTP_404_NOT_FOUND)
-
-        if record.collection_id not in auth.collection_ids:
-            raise HTTPException(HTTP_403_FORBIDDEN)
-
-    audit_user_alias = aliased(User)
-    tag_user_alias = aliased(User)
-
-    if not (row := Session.execute(
-            select(
-                RecordTagAudit,
-                audit_user_alias.name.label('audit_user_name'),
-                tag_user_alias.name.label('tag_user_name')
-            ).
-                    outerjoin(audit_user_alias, RecordTagAudit.user_id == audit_user_alias.id).
-                    outerjoin(tag_user_alias, RecordTagAudit._user_id == tag_user_alias.id).
-                    where(RecordTagAudit.id == record_tag_audit_id).
-                    where(RecordTagAudit._record_id == record_id)
-    ).one_or_none()):
+    if not (audit := Session.execute(
+            select(RecordTagAudit).
+            where(RecordTagAudit.id == record_tag_audit_id).
+            where(RecordTagAudit._record_id == record_id)
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
     return RecordTagAuditModel(
         table='record_tag',
-        tag_id=row.RecordTagAudit._tag_id,
-        audit_id=row.RecordTagAudit.id,
-        client_id=row.RecordTagAudit.client_id,
-        user_id=row.RecordTagAudit.user_id,
-        user_name=row.audit_user_name,
-        command=row.RecordTagAudit.command,
-        timestamp=row.RecordTagAudit.timestamp.isoformat(),
-        record_tag_id=row.RecordTagAudit._id,
-        record_tag_record_id=row.RecordTagAudit._record_id,
-        record_tag_user_id=row.RecordTagAudit._user_id,
-        record_tag_user_name=row.tag_user_name,
-        record_tag_data=row.RecordTagAudit._data,
+        tag_id=audit._tag_id,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        record_tag_id=audit._id,
+        record_tag_record_id=audit._record_id,
+        record_tag_user_id=audit._user_id,
+        record_tag_user_name=audit._user_name,
+        record_tag_data=audit._data,
     )

@@ -4,10 +4,10 @@ source =
     odp.api.models
     odp.config
     odp.const
+    odp.lib.auth
     odp.lib.cache
     odp.lib.client
     odp.lib.datacite
-    odp.lib.hydra
     odp.logfile
     odp.schema
     odp.version
@@ -18,8 +18,6 @@ source =
     odp.api.routers
     odp.catalog
     odp.db
-    odp.identity
-    odp.lib.auth
     odp.lib.exceptions
     odp.lib.schema
 

@@ -15,21 +15,14 @@ from odp.const import (
     ODPCollectionTag,
     ODPMetadataSchema,
     ODPRecordTag,
-    ODPScope,
-    ODPSystemRole,
     ODPTagSchema,
     ODPVocabulary,
     ODPVocabularySchema,
 )
-from odp.const.db import SchemaType, ScopeType
-from odp.const.hydra import GrantType, HydraScope
+from odp.const.db import SchemaType
 from odp.db import Base, Session, engine
-from odp.db.models import Catalog, Client, Collection, Role, Schema, Scope, Tag, Vocabulary, VocabularyTerm
-from odp.lib.hydra import HydraAdminAPI
+from odp.db.models import Catalog, Schema, Tag, Vocabulary, VocabularyTerm
 from odp.lib.schema import schema_md5
-from nccrd.const import NCCRDScope
-from sadco.const import SADCOScope
-from somisana.const import SOMISANAScope
 
 datadir = pathlib.Path(__file__).parent / 'systemdata'
 logger = logging.getLogger(__name__)
@@ -43,15 +36,10 @@ def initialize():
     init_database_schema()
 
     with Session.begin():
-        init_system_scopes()
-        init_standard_scopes()
-        init_client_scopes()
-        init_system_roles()
         init_schemas()
         init_vocabularies()
         init_tags()
         init_catalogs()
-        init_clients()
 
     logger.info('Done.')
 
@@ -77,74 +65,6 @@ def init_database_schema():
             logger.info('Created the ODP database schema.')
     finally:
         os.chdir(cwd)
-
-
-def init_system_scopes():
-    """Create or update the set of available ODP system scopes."""
-    for scope_id in (scope_ids := [s.value for s in ODPScope]):
-        if not Session.get(Scope, (scope_id, ScopeType.odp)):
-            scope = Scope(id=scope_id, type=ScopeType.odp)
-            scope.save()
-
-    Session.execute(
-        delete(Scope).
-        where(Scope.type == ScopeType.odp).
-        where(Scope.id.not_in(scope_ids))
-    )
-
-
-def init_standard_scopes():
-    """Create or update the set of available standard OAuth2 scopes."""
-    for scope_id in (scope_ids := [s.value for s in HydraScope]):
-        if not Session.get(Scope, (scope_id, ScopeType.oauth)):
-            scope = Scope(id=scope_id, type=ScopeType.oauth)
-            scope.save()
-
-    Session.execute(
-        delete(Scope).
-        where(Scope.type == ScopeType.oauth).
-        where(Scope.id.not_in(scope_ids))
-    )
-
-
-def init_client_scopes():
-    """Create or update the set of available API scopes for
-    SADCO, SOMISANA and NCCRD."""
-    scope_classes = {
-        'nccrd.%': NCCRDScope,
-        'sadco.%': SADCOScope,
-        'somisana.%': SOMISANAScope,
-    }
-    for scope_pattern, scope_enum in scope_classes.items():
-        for scope_id in (scope_ids := [s.value for s in scope_enum]):
-            if not Session.get(Scope, (scope_id, ScopeType.client)):
-                scope = Scope(id=scope_id, type=ScopeType.client)
-                scope.save()
-
-        Session.execute(
-            delete(Scope).
-            where(Scope.type == ScopeType.client).
-            where(Scope.id.like(scope_pattern)).
-            where(Scope.id.not_in(scope_ids))
-        )
-
-
-def init_system_roles():
-    """Create or update system roles."""
-    with open(datadir / 'roles.yml') as f:
-        role_data = yaml.safe_load(f)
-
-    for role_id in (role_ids := [r.value for r in ODPSystemRole]):
-        role = Session.get(Role, role_id) or Role(id=role_id)
-        role_spec = role_data[role_id]
-        role.scopes = [
-            Session.execute(select(Scope).where(Scope.id == scope_id)).scalar_one()
-            for scope_id in _expand_scopes(role_spec['scopes'])
-        ]
-        role.save()
-
-    if orphaned_yml_roles := [role_id for role_id in role_data if role_id not in role_ids]:
-        logger.warning(f'Orphaned role definitions in roles.yml {orphaned_yml_roles}')
 
 
 def init_schemas():
@@ -186,7 +106,6 @@ def init_tags():
         tag.cardinality = tag_spec['cardinality']
         tag.public = tag_spec['public']
         tag.scope_id = tag_spec['scope_id']
-        tag.scope_type = ScopeType.odp
         tag.schema_id = tag_spec['schema_id']
         tag.schema_type = SchemaType.tag
         tag.vocabulary_id = tag_spec.get('vocabulary_id')
@@ -212,7 +131,6 @@ def init_vocabularies():
         vocabulary_spec = vocabulary_data[vocabulary_id]
         vocabulary = Session.get(Vocabulary, vocabulary_id) or Vocabulary(id=vocabulary_id)
         vocabulary.scope_id = vocabulary_spec['scope_id']
-        vocabulary.scope_type = ScopeType.odp
         vocabulary.schema_id = vocabulary_spec['schema_id']
         vocabulary.schema_type = SchemaType.vocabulary
         vocabulary.save()
@@ -260,58 +178,3 @@ def init_catalogs():
 
     if orphaned_db_catalogs := Session.execute(select(Catalog.id).where(Catalog.id.not_in(catalog_ids))).scalars().all():
         logger.warning(f'Orphaned catalog definitions in catalog table {orphaned_db_catalogs}')
-
-
-def init_clients():
-    """Create or update preconfigured clients."""
-    hydra_admin_api = HydraAdminAPI(os.environ['HYDRA_ADMIN_URL'])
-
-    with open(datadir / 'clients.yml') as f:
-        client_data = yaml.safe_load(f)
-
-    for client_id, client_spec in client_data.items():
-        client = Session.get(Client, client_id) or Client(id=client_id)
-        client.scopes = [
-            Session.execute(select(Scope).where(Scope.id == scope_id)).scalar_one()
-            for scope_id in _expand_scopes(client_spec['scopes'])
-        ]
-        if collection_keys := client_spec.get('collections'):
-            client.collection_specific = True
-            client.collections = Session.execute(
-                select(Collection).where(Collection.key.in_(collection_keys))
-            ).scalars().all()
-        else:
-            client.collection_specific = False
-
-        client.save()
-
-        opts = dict(
-            name=client_spec['name'],
-            secret=os.environ[client_spec['secret_env']],
-            scope_ids=_expand_scopes(client_spec['scopes']),
-            grant_types=client_spec['grant_types'],
-        )
-        if url_env := client_spec.get('url_env'):
-            url = os.environ[url_env]
-            opts |= dict(
-                response_types=client_spec['response_types'],
-                redirect_uris=[url + '/oauth2/logged_in'],
-                post_logout_redirect_uris=[url + '/oauth2/logged_out'],
-            )
-        if (token_lifespan := client_spec.get('token_lifespan')) and \
-                GrantType.CLIENT_CREDENTIALS in client_spec['grant_types']:
-            opts |= dict(
-                client_credentials_grant_access_token_lifespan=token_lifespan,
-            )
-
-        hydra_admin_api.create_or_update_client(client_id, **opts)
-
-
-def _expand_scopes(scope_ids):
-    ret = []
-    for scope_id in scope_ids:
-        if scope_id == 'odp.*':
-            ret += [s.value for s in ODPScope]
-        else:
-            ret += [scope_id]
-    return ret

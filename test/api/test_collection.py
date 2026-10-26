@@ -9,10 +9,10 @@ from sqlalchemy import select
 from odp.const import DOI_REGEX, ODPScope
 from odp.const.db import ScopeType
 from odp.db import Session
-from odp.db.models import Collection, CollectionAudit, CollectionTag, CollectionTagAudit, Scope
-from test.api import (CollectionAuth, all_scopes, all_scopes_excluding, assert_conflict, assert_empty_result, assert_forbidden, assert_new_timestamp,
+from odp.db.models import Collection, CollectionAudit, CollectionTag, CollectionTagAudit
+from test.api import (all_scopes, all_scopes_excluding, assert_conflict, assert_empty_result, assert_forbidden, assert_new_timestamp,
                       assert_not_found, assert_unprocessable)
-from test.factories import (ClientFactory, CollectionFactory, CollectionTagFactory, ProviderFactory, RecordFactory, RoleFactory, SchemaFactory,
+from test.factories import (CollectionFactory, CollectionTagFactory, ProviderFactory, RecordFactory, SchemaFactory,
                             TagFactory)
 
 
@@ -20,16 +20,6 @@ from test.factories import (ClientFactory, CollectionFactory, CollectionTagFacto
 def collection_batch():
     """Create and commit a batch of Collection instances."""
     return [CollectionFactory() for _ in range(randint(3, 5))]
-
-
-@pytest.fixture
-def collection_batch_with_roles_and_clients():
-    """Create and commit a batch of Collection instances,
-    with associated clients and roles."""
-    collections = [CollectionFactory() for _ in range(randint(3, 5))]
-    ClientFactory.create_batch(randint(0, 3), collections=collections)
-    RoleFactory.create_batch(randint(0, 3), collections=collections)
-    return collections
 
 
 def collection_build(**id):
@@ -40,14 +30,6 @@ def collection_build(**id):
         provider=(provider := ProviderFactory()),
         provider_id=provider.id,
     )
-
-
-def client_ids(collection):
-    return tuple(sorted(client.id for client in collection.clients if client.id != 'odp.test'))
-
-
-def role_ids(collection):
-    return tuple(sorted(role.id for role in collection.roles))
 
 
 def assert_db_state(collections):
@@ -64,8 +46,6 @@ def assert_db_state(collections):
         assert row.doi_key == collections[n].doi_key
         assert row.provider_id == collections[n].provider_id
         assert_new_timestamp(row.timestamp)
-        assert client_ids(row) == client_ids(collections[n])
-        assert role_ids(row) == role_ids(collections[n])
 
 
 def assert_db_tag_state(collection_id, *collection_tags):
@@ -128,8 +108,6 @@ def assert_json_collection_result(response, json, collection):
     assert json['doi_key'] == collection.doi_key
     assert json['provider_id'] == collection.provider_id
     assert json['provider_key'] == collection.provider.key
-    assert tuple(sorted(cid for cid in json['client_ids'] if cid != 'odp.test')) == client_ids(collection)
-    assert tuple(sorted(json['role_ids'])) == role_ids(collection)
     assert_new_timestamp(datetime.fromisoformat(json['timestamp']))
 
 
@@ -164,88 +142,47 @@ def assert_doi_result(response, collection):
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_READ)
-def test_list_collections(api, collection_batch_with_roles_and_clients, scopes, collection_auth):
+def test_list_collections(api, collection_batch, scopes):
     authorized = ODPScope.COLLECTION_READ in scopes
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch_with_roles_and_clients[2]]
-        expected_result_batch = api_client_collections
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [CollectionFactory()]
-        expected_result_batch = api_client_collections
-        collection_batch_with_roles_and_clients += api_client_collections
-    else:
-        api_client_collections = None
-        expected_result_batch = collection_batch_with_roles_and_clients
-
-    r = api(scopes, api_client_collections).get('/collection/')
+    r = api(scopes).get('/collection/')
 
     if authorized:
-        assert_json_collection_results(r, r.json(), expected_result_batch)
+        assert_json_collection_results(r, r.json(), collection_batch)
     else:
         assert_forbidden(r)
 
-    assert_db_state(collection_batch_with_roles_and_clients)
+    assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_READ)
-def test_get_collection(api, collection_batch_with_roles_and_clients, scopes, collection_auth):
-    authorized = ODPScope.COLLECTION_READ in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch_with_roles_and_clients[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch_with_roles_and_clients[1]]
-    else:
-        api_client_collections = None
-
-    r = api(scopes, api_client_collections).get(f'/collection/{collection_batch_with_roles_and_clients[2].id}')
+def test_get_collection(api, collection_batch, scopes):
+    authorized = ODPScope.COLLECTION_READ in scopes
+    r = api(scopes).get(f'/collection/{collection_batch[2].id}')
 
     if authorized:
-        assert_json_collection_result(r, r.json(), collection_batch_with_roles_and_clients[2])
+        assert_json_collection_result(r, r.json(), collection_batch[2])
     else:
         assert_forbidden(r)
 
-    assert_db_state(collection_batch_with_roles_and_clients)
+    assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
-def test_get_collection_not_found(api, collection_batch_with_roles_and_clients, collection_auth):
+def test_get_collection_not_found(api, collection_batch):
     scopes = [ODPScope.COLLECTION_READ]
-    authorized = collection_auth == CollectionAuth.NONE
-
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [collection_batch_with_roles_and_clients[2]]
-
-    r = api(scopes, api_client_collections).get('/collection/foo')
-
-    if authorized:
-        assert_not_found(r)
-    else:
-        assert_forbidden(r)
-
-    assert_db_state(collection_batch_with_roles_and_clients)
+    r = api(scopes).get('/collection/foo')
+    assert_not_found(r)
+    assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_ADMIN)
-def test_create_collection(api, collection_batch, scopes, collection_auth):
-    # note that collection-specific auth will never allow creating a new collection
-    authorized = ODPScope.COLLECTION_ADMIN in scopes and \
-                 collection_auth == CollectionAuth.NONE
-
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [collection_batch[2]]
-
+def test_create_collection(api, collection_batch, scopes):
+    authorized = ODPScope.COLLECTION_ADMIN in scopes
     modified_collection_batch = collection_batch + [collection := collection_build()]
 
-    r = api(scopes, api_client_collections).post('/collection/', json=dict(
+    r = api(scopes).post('/collection/', json=dict(
         key=collection.key,
         name=collection.name,
         doi_key=collection.doi_key,
@@ -263,51 +200,32 @@ def test_create_collection(api, collection_batch, scopes, collection_auth):
         assert_no_audit_log()
 
 
-def test_create_collection_conflict(api, collection_batch, collection_auth):
+def test_create_collection_conflict(api, collection_batch):
     scopes = [ODPScope.COLLECTION_ADMIN]
-    authorized = collection_auth == CollectionAuth.NONE
-
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [collection_batch[2]]
-
     collection = collection_build(key=collection_batch[2].key)
 
-    r = api(scopes, api_client_collections).post('/collection/', json=dict(
+    r = api(scopes).post('/collection/', json=dict(
         key=collection.key,
         name=collection.name,
         doi_key=collection.doi_key,
         provider_id=collection.provider_id,
     ))
 
-    if authorized:
-        assert_conflict(r, 'Collection key is already in use')
-    else:
-        assert_forbidden(r)
-
+    assert_conflict(r, 'Collection key is already in use')
     assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_ADMIN)
-def test_update_collection(api, collection_batch, scopes, collection_auth):
-    authorized = ODPScope.COLLECTION_ADMIN in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
+def test_update_collection(api, collection_batch, scopes):
+    authorized = ODPScope.COLLECTION_ADMIN in scopes
 
     modified_collection_batch = collection_batch.copy()
     modified_collection_batch[2] = (collection := collection_build(
         id=collection_batch[2].id,
     ))
 
-    r = api(scopes, api_client_collections).put(f'/collection/{collection.id}', json=dict(
+    r = api(scopes).put(f'/collection/{collection.id}', json=dict(
         key=collection.key,
         name=collection.name,
         doi_key=collection.doi_key,
@@ -324,61 +242,37 @@ def test_update_collection(api, collection_batch, scopes, collection_auth):
         assert_no_audit_log()
 
 
-def test_update_collection_not_found(api, collection_batch, collection_auth):
+def test_update_collection_not_found(api, collection_batch):
     scopes = [ODPScope.COLLECTION_ADMIN]
-    authorized = collection_auth == CollectionAuth.NONE
-
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [collection_batch[2]]
-
     collection = collection_build(id=str(uuid.uuid4()))
 
-    r = api(scopes, api_client_collections).put(f'/collection/{collection.id}', json=dict(
+    r = api(scopes).put(f'/collection/{collection.id}', json=dict(
         key=collection.key,
         name=collection.name,
         doi_key=collection.doi_key,
         provider_id=collection.provider_id,
     ))
 
-    if authorized:
-        assert_not_found(r)
-    else:
-        assert_forbidden(r)
-
+    assert_not_found(r)
     assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
-def test_update_collection_conflict(api, collection_batch, collection_auth):
+def test_update_collection_conflict(api, collection_batch):
     scopes = [ODPScope.COLLECTION_ADMIN]
-    authorized = collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
-
     collection = collection_build(
         id=collection_batch[2].id,
         key=collection_batch[0].key,
     )
 
-    r = api(scopes, api_client_collections).put(f'/collection/{collection.id}', json=dict(
+    r = api(scopes).put(f'/collection/{collection.id}', json=dict(
         key=collection.key,
         name=collection.name,
         doi_key=collection.doi_key,
         provider_id=collection.provider_id,
     ))
 
-    if authorized:
-        assert_conflict(r, 'Collection key is already in use')
-    else:
-        assert_forbidden(r)
-
+    assert_conflict(r, 'Collection key is already in use')
     assert_db_state(collection_batch)
     assert_no_audit_log()
 
@@ -389,16 +283,8 @@ def has_record(request):
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_ADMIN)
-def test_delete_collection(api, collection_batch, scopes, collection_auth, has_record):
-    authorized = ODPScope.COLLECTION_ADMIN in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
+def test_delete_collection(api, collection_batch, scopes, has_record):
+    authorized = ODPScope.COLLECTION_ADMIN in scopes
 
     modified_collection_batch = collection_batch.copy()
     deleted_collection = modified_collection_batch[2]
@@ -407,7 +293,7 @@ def test_delete_collection(api, collection_batch, scopes, collection_auth, has_r
     if has_record:
         RecordFactory(collection=collection_batch[2])
 
-    r = api(scopes, api_client_collections).delete(f'/collection/{collection_batch[2].id}')
+    r = api(scopes).delete(f'/collection/{collection_batch[2].id}')
 
     if authorized:
         if has_record:
@@ -416,7 +302,6 @@ def test_delete_collection(api, collection_batch, scopes, collection_auth, has_r
             assert_no_audit_log()
         else:
             assert_empty_result(r)
-            # check audit log first because assert_db_state expires the deleted item
             assert_audit_log('delete', deleted_collection)
             assert_db_state(modified_collection_batch)
     else:
@@ -425,39 +310,18 @@ def test_delete_collection(api, collection_batch, scopes, collection_auth, has_r
         assert_no_audit_log()
 
 
-def test_delete_collection_not_found(api, collection_batch, collection_auth):
+def test_delete_collection_not_found(api, collection_batch):
     scopes = [ODPScope.COLLECTION_ADMIN]
-    authorized = collection_auth == CollectionAuth.NONE
-
-    if collection_auth == CollectionAuth.NONE:
-        api_client_collections = None
-    else:
-        api_client_collections = [collection_batch[2]]
-
-    r = api(scopes, api_client_collections).delete('/collection/foo')
-
-    if authorized:
-        assert_not_found(r)
-    else:
-        assert_forbidden(r)
-
+    r = api(scopes).delete('/collection/foo')
+    assert_not_found(r)
     assert_db_state(collection_batch)
     assert_no_audit_log()
 
 
 @pytest.mark.require_scope(ODPScope.COLLECTION_READ)
-def test_get_new_doi(api, collection_batch, scopes, collection_auth):
-    authorized = ODPScope.COLLECTION_READ in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
-
-    r = api(scopes, api_client_collections).get(f'/collection/{(collection := collection_batch[2]).id}/doi/new')
+def test_get_new_doi(api, collection_batch, scopes):
+    authorized = ODPScope.COLLECTION_READ in scopes
+    r = api(scopes).get(f'/collection/{(collection := collection_batch[2]).id}/doi/new')
 
     if authorized:
         if collection.doi_key:
@@ -472,15 +336,10 @@ def test_get_new_doi(api, collection_batch, scopes, collection_auth):
 
 
 def new_generic_tag(cardinality):
-    # we can use any scope; just make it something other than COLLECTION_ADMIN
     return TagFactory(
         type='collection',
         cardinality=cardinality,
-        scope=Session.get(
-            Scope, (ODPScope.COLLECTION_FREEZE, ScopeType.odp)
-        ) or Scope(
-            id=ODPScope.COLLECTION_FREEZE, type=ScopeType.odp
-        ),
+        scope_id=ODPScope.COLLECTION_FREEZE.value,
         schema=SchemaFactory(
             type='tag',
             uri='https://odp.saeon.ac.za/schema/tag/generic',
@@ -488,19 +347,10 @@ def new_generic_tag(cardinality):
     )
 
 
-@pytest.mark.require_scope(ODPScope.COLLECTION_FREEZE)  # scope associated with the generic tag
-def test_tag_collection(api, collection_batch, scopes, collection_auth, tag_cardinality):
-    authorized = ODPScope.COLLECTION_FREEZE in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+@pytest.mark.require_scope(ODPScope.COLLECTION_FREEZE)
+def test_tag_collection(api, collection_batch, scopes, tag_cardinality):
+    authorized = ODPScope.COLLECTION_FREEZE in scopes
+    client = api(scopes)
     tag = new_generic_tag(tag_cardinality)
 
     r = client.post(
@@ -553,19 +403,10 @@ def test_tag_collection(api, collection_batch, scopes, collection_auth, tag_card
     assert_no_audit_log()
 
 
-@pytest.mark.require_scope(ODPScope.COLLECTION_FREEZE)  # scope associated with the generic tag
-def test_tag_collection_user_conflict(api, collection_batch, scopes, collection_auth, tag_cardinality):
-    authorized = ODPScope.COLLECTION_FREEZE in scopes and \
-                 collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
-
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+@pytest.mark.require_scope(ODPScope.COLLECTION_FREEZE)
+def test_tag_collection_user_conflict(api, collection_batch, scopes, tag_cardinality):
+    authorized = ODPScope.COLLECTION_FREEZE in scopes
+    client = api(scopes)
     tag = new_generic_tag(tag_cardinality)
     collection_tag_1 = CollectionTagFactory(
         collection=collection_batch[2],
@@ -607,7 +448,7 @@ def same_user(request):
 
 
 @pytest.mark.parametrize('admin_route, scopes', [
-    (False, [ODPScope.COLLECTION_FREEZE]),  # the scope we've associated with the generic tag
+    (False, [ODPScope.COLLECTION_FREEZE]),
     (False, []),
     (False, all_scopes),
     (False, all_scopes_excluding(ODPScope.COLLECTION_FREEZE)),
@@ -616,21 +457,13 @@ def same_user(request):
     (True, all_scopes),
     (True, all_scopes_excluding(ODPScope.COLLECTION_ADMIN)),
 ])
-def test_untag_collection(api, collection_batch, admin_route, scopes, collection_auth, tag_cardinality, same_user):
+def test_untag_collection(api, collection_batch, admin_route, scopes, tag_cardinality, same_user):
     route = '/collection/admin/' if admin_route else '/collection/'
 
     authorized = admin_route and ODPScope.COLLECTION_ADMIN in scopes or \
                  not admin_route and ODPScope.COLLECTION_FREEZE in scopes
-    authorized = authorized and collection_auth in (CollectionAuth.NONE, CollectionAuth.MATCH)
 
-    if collection_auth == CollectionAuth.MATCH:
-        api_client_collections = [collection_batch[2]]
-    elif collection_auth == CollectionAuth.MISMATCH:
-        api_client_collections = [collection_batch[1]]
-    else:
-        api_client_collections = None
-
-    client = api(scopes, api_client_collections)
+    client = api(scopes)
     collection = collection_batch[2]
     collection_tags = CollectionTagFactory.create_batch(randint(1, 3), collection=collection)
 
@@ -639,7 +472,8 @@ def test_untag_collection(api, collection_batch, admin_route, scopes, collection
         collection_tag_1 = CollectionTagFactory(
             collection=collection,
             tag=tag,
-            user=None,
+            user_id=None,
+            user_name=None,
         )
     else:
         collection_tag_1 = CollectionTagFactory(

@@ -1,18 +1,6 @@
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 
 from odp.const import ODPScope
-
-
-class CollectionAuth(Enum):
-    """API routes that support collection-specific resource authorization
-    may have three possible outcomes (all else being equal) depending on
-    whether the test client is configured with no collection, or with a
-    collection (not) matching the resource collection."""
-    NONE = 0
-    MATCH = 1
-    MISMATCH = 2
-
 
 all_scopes = [s for s in ODPScope]
 

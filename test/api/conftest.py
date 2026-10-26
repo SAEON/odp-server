@@ -1,64 +1,48 @@
+import time
+
 import pytest
-from authlib.integrations.requests_client import OAuth2Session
+from authlib.jose import JsonWebKey, JsonWebToken, KeySet
 from starlette.testclient import TestClient
 
 import odp.api.main
-from odp.config import config
-from odp.const import ODPScope
+import odp.lib.auth
 from odp.const.db import TagCardinality
-from odp.db import Session
-from odp.db.models import Scope
-from odp.lib.hydra import HydraAdminAPI
-from test.api import CollectionAuth, all_scopes, all_scopes_excluding
-from test.factories import ClientFactory, ScopeFactory
+from test.api import all_scopes, all_scopes_excluding
 
-hydra_admin_url = config.HYDRA.ADMIN.URL
-hydra_public_url = config.HYDRA.PUBLIC.URL
+
+@pytest.fixture(scope='session')
+def test_jwk():
+    return JsonWebKey.generate_key('RSA', 2048, is_private=True, options={'kid': 'test-api-key'})
 
 
 @pytest.fixture
-def api():
-    def scoped_client(scopes, collections=None, create_scopes=True):
-        if create_scopes:
-            scope_objects = [ScopeFactory(id=s.value, type='odp') for s in scopes]
-        else:
-            scope_objects = [Session.get(Scope, (s.value, 'odp')) for s in scopes]
+def api(monkeypatch, test_jwk):
+    key_set = KeySet([test_jwk])
+    monkeypatch.setattr(odp.lib.auth, 'get_jwks', lambda auth_url=None, force_refresh=False: key_set)
+    jwt = JsonWebToken(['RS256'])
 
-        ClientFactory(
-            id='odp.test',
-            scopes=scope_objects,
-            collection_specific=collections is not None,
-            collections=collections,
-        )
-        token = OAuth2Session(
-            client_id='odp.test',
-            client_secret='secret',
-            scope=' '.join(s.value for s in ODPScope),
-        ).fetch_token(
-            f'{hydra_public_url}/oauth2/token',
-            grant_type='client_credentials',
-            timeout=1.0,
-        )
+    def scoped_client(scopes, create_scopes=True):
+        now = int(time.time())
+        scope_values = [s.value if hasattr(s, 'value') else str(s) for s in scopes]
+        payload = {
+            'sub': 'odp.test',
+            'azp': 'odp.test',
+            'client_id': 'odp.test',
+            'preferred_username': 'service-account-odp.test',
+            'roles': scope_values,
+            'scope': ' '.join(['openid'] + scope_values),
+            'iat': now,
+            'exp': now + 3600,
+        }
+        access_token = jwt.encode({'alg': 'RS256', 'kid': 'test-api-key'}, payload, test_jwk).decode('utf-8')
         api_client = TestClient(app=odp.api.main.app)
         api_client.headers = {
             'Accept': 'application/json',
-            'Authorization': 'Bearer ' + token['access_token'],
+            'Authorization': f'Bearer {access_token}',
         }
         return api_client
 
     return scoped_client
-
-
-@pytest.fixture(scope='session')
-def hydra_admin_api():
-    return HydraAdminAPI(hydra_admin_url)
-
-
-@pytest.fixture(params=CollectionAuth)
-def collection_auth(request):
-    """Use for parameterizing the three possible logic branches
-    involving collection-specific authorization."""
-    return request.param
 
 
 @pytest.fixture(params=TagCardinality)
@@ -72,21 +56,10 @@ def scopes(request):
     """Fixture for parameterizing the set of auth scopes
     to be associated with the API test client.
 
-    The test function must be decorated to indicated the scope
+    The test function must be decorated to indicate the scope
     required by the API route::
 
         @pytest.mark.require_scope(ODPScope.CATALOG_READ)
-
-    This has the same effect as parameterizing the test function
-    as follows::
-
-        @pytest.mark.parametrize('scopes', [
-            [ODPScope.CATALOG_READ],
-            [],
-            all_scopes,
-            all_scopes_excluding(ODPScope.CATALOG_READ),
-        ])
-
     """
     scope = request.node.get_closest_marker('require_scope').args[0]
 

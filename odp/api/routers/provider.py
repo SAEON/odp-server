@@ -12,7 +12,7 @@ from odp.api.models import ProviderAuditModel, ProviderModel, ProviderModelIn
 from odp.const import ODPScope
 from odp.const.db import AuditCommand
 from odp.db import Session
-from odp.db.models import Provider, ProviderAudit, User
+from odp.db.models import Provider, ProviderAudit
 
 router = APIRouter()
 
@@ -30,19 +30,19 @@ def output_provider_model(provider: Provider) -> ProviderModel:
     )
 
 
-def output_audit_model(row) -> ProviderAuditModel:
+def output_audit_model(audit: ProviderAudit) -> ProviderAuditModel:
     return ProviderAuditModel(
         table='provider',
         tag_id=None,
-        audit_id=row.ProviderAudit.id,
-        client_id=row.ProviderAudit.client_id,
-        user_id=row.ProviderAudit.user_id,
-        user_name=row.user_name,
-        command=row.ProviderAudit.command,
-        timestamp=row.ProviderAudit.timestamp.isoformat(),
-        provider_id=row.ProviderAudit._id,
-        provider_key=row.ProviderAudit._key,
-        provider_name=row.ProviderAudit._name,
+        audit_id=audit.id,
+        client_id=audit.client_id,
+        user_id=audit.user_id,
+        user_name=audit.user_name,
+        command=audit.command,
+        timestamp=audit.timestamp.isoformat(),
+        provider_id=audit._id,
+        provider_key=audit._key,
+        provider_name=audit._name,
     )
 
 
@@ -55,6 +55,7 @@ def create_audit_record(
     ProviderAudit(
         client_id=auth.client_id,
         user_id=auth.user_id,
+        user_name=auth.user_name,
         command=command,
         timestamp=timestamp,
         _id=provider.id,
@@ -176,14 +177,13 @@ async def get_provider_audit_log(
         paginator: Paginator = Depends(partial(Paginator, sort='timestamp')),
 ):
     stmt = (
-        select(ProviderAudit, User.name.label('user_name')).
-        outerjoin(User, ProviderAudit.user_id == User.id).
+        select(ProviderAudit).
         where(ProviderAudit._id == provider_id)
     )
 
     return paginator.paginate(
         stmt,
-        lambda row: output_audit_model(row),
+        lambda row: output_audit_model(row.ProviderAudit),
     )
 
 
@@ -196,12 +196,11 @@ async def get_provider_audit_detail(
         provider_id: str,
         audit_id: int,
 ):
-    if not (row := Session.execute(
-            select(ProviderAudit, User.name.label('user_name')).
-            outerjoin(User, ProviderAudit.user_id == User.id).
+    if not (audit := Session.execute(
+            select(ProviderAudit).
             where(ProviderAudit.id == audit_id).
             where(ProviderAudit._id == provider_id)
-    ).one_or_none()):
+    ).scalar_one_or_none()):
         raise HTTPException(HTTP_404_NOT_FOUND)
 
-    return output_audit_model(row)
+    return output_audit_model(audit)
